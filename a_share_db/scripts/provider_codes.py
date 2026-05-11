@@ -33,6 +33,30 @@ def build_eastmoney_secid(code: str, exchange: str) -> str:
     return code
 
 
+def build_tushare_ts_code(code: str, exchange: str) -> str:
+    """Return Tushare ts_code, for example 600519.SH."""
+    exchange = (exchange or "").upper()
+    suffix_by_exchange = {
+        "SSE": "SH",
+        "SZSE": "SZ",
+        "BSE": "BJ",
+    }
+    suffix = suffix_by_exchange.get(exchange)
+    if suffix is None:
+        suffix = _infer_tushare_suffix(code)
+    return f"{code}.{suffix}" if suffix else code
+
+
+def _infer_tushare_suffix(code: str) -> str:
+    if code.startswith(("60", "68")):
+        return "SH"
+    if code.startswith(("00", "30")):
+        return "SZ"
+    if code.startswith(("4", "8", "9")):
+        return "BJ"
+    return ""
+
+
 def _market_prefix(code: str, exchange: str) -> str:
     exchange = (exchange or "").upper()
     prefix_by_exchange = {

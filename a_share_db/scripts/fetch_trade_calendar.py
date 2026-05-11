@@ -2,8 +2,8 @@
 """Fetch exchange trade calendars from Tushare.
 
 Outputs the metadata tables defined in DESIGN.md:
-metadata/trade_calendar.csv
-metadata/raw_tushare_trade_calendar.csv
+data/metadata/trade_calendar.csv
+data/metadata/raw_tushare_trade_calendar.csv
 """
 
 from __future__ import annotations
@@ -27,18 +27,24 @@ from a_share_db.constant.trade_calendar import (
     TRADE_CALENDAR_COLUMNS,
     TUSHARE_TRADE_CALENDAR_FIELDS,
 )
+from a_share_db.constant.paths import (
+    BACKUP_ROOT,
+    ETL_LOG_PATH,
+    RAW_TUSHARE_TRADE_CALENDAR_PATH,
+    TRADE_CALENDAR_PATH,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_OUTPUT = PROJECT_ROOT / "metadata" / "trade_calendar.csv"
-DEFAULT_RAW_OUTPUT = PROJECT_ROOT / "metadata" / "raw_tushare_trade_calendar.csv"
-DEFAULT_LOG = PROJECT_ROOT / "logs" / "etl_log.csv"
-DEFAULT_BACKUP_ROOT = PROJECT_ROOT / "backups"
+DEFAULT_OUTPUT = TRADE_CALENDAR_PATH
+DEFAULT_RAW_OUTPUT = RAW_TUSHARE_TRADE_CALENDAR_PATH
+DEFAULT_LOG = ETL_LOG_PATH
+DEFAULT_BACKUP_ROOT = BACKUP_ROOT
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Fetch Tushare trade_cal data and build metadata/trade_calendar.csv."
+        description="Fetch Tushare trade_cal data and build data/metadata/trade_calendar.csv."
     )
     parser.add_argument(
         "--token",
@@ -79,7 +85,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--no-log",
         action="store_true",
-        help="Do not append execution status to logs/etl_log.csv.",
+        help="Do not append execution status to data/logs/etl_log.csv.",
     )
     parser.add_argument(
         "--limit",

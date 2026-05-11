@@ -2,8 +2,8 @@
 """Fetch A-share stock metadata from Tushare.
 
 Outputs the metadata tables defined in DESIGN.md:
-metadata/stock_basic.csv
-metadata/raw_tushare_stock_basic.csv
+data/metadata/stock_basic.csv
+data/metadata/raw_tushare_stock_basic.csv
 """
 
 from __future__ import annotations
@@ -27,18 +27,24 @@ from a_share_db.constant.stock_basic import (
     TUSHARE_LIST_STATUS_MAP,
     TUSHARE_STOCK_BASIC_FIELDS,
 )
+from a_share_db.constant.paths import (
+    BACKUP_ROOT,
+    ETL_LOG_PATH,
+    RAW_TUSHARE_STOCK_BASIC_PATH,
+    STOCK_BASIC_PATH,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_OUTPUT = PROJECT_ROOT / "metadata" / "stock_basic.csv"
-DEFAULT_RAW_OUTPUT = PROJECT_ROOT / "metadata" / "raw_tushare_stock_basic.csv"
-DEFAULT_LOG = PROJECT_ROOT / "logs" / "etl_log.csv"
-DEFAULT_BACKUP_ROOT = PROJECT_ROOT / "backups"
+DEFAULT_OUTPUT = STOCK_BASIC_PATH
+DEFAULT_RAW_OUTPUT = RAW_TUSHARE_STOCK_BASIC_PATH
+DEFAULT_LOG = ETL_LOG_PATH
+DEFAULT_BACKUP_ROOT = BACKUP_ROOT
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Fetch Tushare stock_basic data and build metadata/stock_basic.csv."
+        description="Fetch Tushare stock_basic data and build data/metadata/stock_basic.csv."
     )
     parser.add_argument(
         "--token",
@@ -71,7 +77,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--no-log",
         action="store_true",
-        help="Do not append execution status to logs/etl_log.csv.",
+        help="Do not append execution status to data/logs/etl_log.csv.",
     )
     parser.add_argument(
         "--limit",

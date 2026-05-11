@@ -17,39 +17,46 @@
 
 ```text
 a_share_db/
-├── metadata/
-│   ├── stock_basic.csv
-│   ├── raw_tushare_stock_basic.csv
-│   ├── raw_tushare_trade_calendar.csv
-│   └── trade_calendar.csv
-│
-├── market_data/
-│   └── daily/
-│       ├── none/
-│       ├── qfq/
-│       └── hfq/
-│
-├── raw/
-│   └── daily/
-│       └── {provider}/
-│           └── {adjust_type}/
-│
-├── backups/
-│   └── {timestamp}/
-│
-├── logs/
-│   ├── etl_log.csv
-│   └── update_status.csv
+├── data/
+│   ├── metadata/
+│   │   ├── stock_basic.csv
+│   │   ├── raw_tushare_stock_basic.csv
+│   │   ├── raw_tushare_trade_calendar.csv
+│   │   └── trade_calendar.csv
+│   │
+│   ├── market_data/
+│   │   ├── daily/
+│   │   │   ├── none/
+│   │   │   ├── qfq/
+│   │   │   └── hfq/
+│   │   └── adj_factor/
+│   │
+│   ├── raw/
+│   │   ├── daily/
+│   │   │   └── {provider}/
+│   │   │       └── {adjust_type}/
+│   │   └── adj_factor/
+│   │       └── {provider}/
+│   │
+│   ├── backups/
+│   │   └── {timestamp}/
+│   │
+│   └── logs/
+│       ├── etl_log.csv
+│       └── update_status.csv
 │
 ├── constant/
 │   ├── stock_basic.py
+│   ├── daily.py
 │   └── trade_calendar.py
 │
 └── scripts/
     ├── provider_codes.py
     ├── fetch_stock_basic.py
     ├── fetch_trade_calendar.py
+    ├── fetch_adj_factor.py
     ├── fetch_daily.py
+    ├── build_adjusted_daily.py
     └── update_all.py
 ```
 
@@ -60,13 +67,13 @@ a_share_db/
 正式数据表设计原则：
 
 ```text
-metadata/stock_basic.csv、metadata/trade_calendar.csv、market_data/daily/* 都是本地维护的正式表。
+data/metadata/stock_basic.csv、data/metadata/trade_calendar.csv、data/market_data/daily/* 都是本地维护的正式表。
 正式表字段必须使用本地领域语义，不保存第三方接口字段名、第三方代码格式或数据源标记。
 第三方原始字段、原始代码、接口来源只允许出现在 raw_* 文件或 ETL 日志中。
 第三方接口调用需要的 symbol、secid 等标识由 scripts/provider_codes.py 按需生成。
 ```
 
-### 3.1 股票基础信息表：`metadata/stock_basic.csv`
+### 3.1 股票基础信息表：`data/metadata/stock_basic.csv`
 
 用途：存储 A 股股票基础信息，作为后续抓取行情、财务、公告的主表。
 
@@ -105,10 +112,10 @@ code
 配套原始表：
 
 ```text
-metadata/raw_tushare_stock_basic.csv
+data/metadata/raw_tushare_stock_basic.csv
 ```
 
-该文件保存 Tushare `stock_basic` 接口原样字段，只用于追溯、排查和重建主表；生产代码应依赖 `metadata/stock_basic.csv`。
+该文件保存 Tushare `stock_basic` 接口原样字段，只用于追溯、排查和重建主表；生产代码应依赖 `data/metadata/stock_basic.csv`。
 
 原始表头：
 
@@ -168,7 +175,7 @@ python3 a_share_db/scripts/fetch_stock_basic.py \
 
 ```text
 1. 写完整的新临时文件：{target}.tmp
-2. 将旧正式文件移动到 backups/{timestamp}/...
+2. 将旧正式文件移动到 data/backups/{timestamp}/...
 3. 将新临时文件替换为正式文件
 4. 如果替换失败且旧文件已备份，自动恢复旧正式文件
 ```
@@ -177,7 +184,7 @@ python3 a_share_db/scripts/fetch_stock_basic.py \
 
 ---
 
-### 3.2 交易日历表：`metadata/trade_calendar.csv`
+### 3.2 交易日历表：`data/metadata/trade_calendar.csv`
 
 用途：判断某一天是否为 A 股交易日，避免按自然日错误抓取。
 
@@ -215,7 +222,7 @@ exchange + calendar_date
 配套原始表：
 
 ```text
-metadata/raw_tushare_trade_calendar.csv
+data/metadata/raw_tushare_trade_calendar.csv
 ```
 
 原始表头：
@@ -278,17 +285,35 @@ python3 a_share_db/scripts/fetch_trade_calendar.py \
 
 ---
 
-### 3.3 日线行情表：`market_data/daily/{adjust_type}/{code}.csv`
+### 3.3 日线行情表：`data/market_data/daily/{adjust_type}/{code}.csv`
 
-用途：存储单只股票的日线行情。
+用途：存储单只股票的日线行情。正式日线价格表分三种复权口径，各自独立成文件：
 
 文件示例：
 
 ```text
-market_data/daily/qfq/600519.csv
-market_data/daily/none/600519.csv
-market_data/daily/hfq/600519.csv
+data/market_data/daily/qfq/600519.csv
+data/market_data/daily/none/600519.csv
+data/market_data/daily/hfq/600519.csv
 ```
+
+四张行情相关正式表：
+
+```text
+data/market_data/daily/none/{code}.csv      # 未复权日线，来自 Tushare daily 转换
+data/market_data/adj_factor/{code}.csv      # 复权因子，来自 Tushare adj_factor 转换
+data/market_data/daily/qfq/{code}.csv       # 前复权日线，由 none + adj_factor 本地生成
+data/market_data/daily/hfq/{code}.csv       # 后复权日线，由 none + adj_factor 本地生成
+```
+
+依赖关系：
+
+```text
+daily none + adj_factor -> daily qfq
+daily none + adj_factor -> daily hfq
+```
+
+不建议把 `none/qfq/hfq` 混在同一行里，也不建议把复权因子塞进日线价格表。复权因子是可复用的基础数据，单独维护便于重建任意截止日的前复权数据。
 
 | Field              | 中文名       | 说明                         |
 | ------------------ | --------- | -------------------------- |
@@ -304,17 +329,13 @@ market_data/daily/hfq/600519.csv
 | `pct_chg`          | 涨跌幅       | 单位 `%`                     |
 | `volume`           | 成交量       | 单位：股                       |
 | `amount`           | 成交额       | 单位：元                       |
-| `amplitude`        | 振幅        | 单位 `%`                     |
-| `turnover`         | 换手率       | 单位 `%`                     |
-| `free_market_cap`  | 流通市值      | 单位：元                       |
-| `total_market_cap` | 总市值       | 单位：元                       |
 | `adjust_type`      | 复权类型      | `none` / `qfq` / `hfq`     |
 | `update_time`      | 更新时间      | 格式：`YYYY-MM-DD HH:MM:SS`   |
 
 CSV 表头：
 
 ```csv
-code,name,trade_date,open,high,low,close,pre_close,change,pct_chg,volume,amount,amplitude,turnover,free_market_cap,total_market_cap,adjust_type,update_time
+code,name,trade_date,open,high,low,close,pre_close,change,pct_chg,volume,amount,adjust_type,update_time
 ```
 
 唯一键：
@@ -326,14 +347,159 @@ code + trade_date + adjust_type
 第三方接口返回的原始日线字段如需保留，存放在 raw 文件中，例如：
 
 ```text
-raw/daily/{provider}/{adjust_type}/{code}.csv
+data/raw/daily/{provider}/{adjust_type}/{code}.csv
 ```
 
 正式日线表由转换组件写入，转换时可通过 `scripts/provider_codes.py` 从 `code + exchange` 生成接口调用需要的 provider code，但 provider code 不落入正式日线表。
 
+Tushare `daily` 字段转换关系：
+
+| 正式表字段      | Tushare daily 原始字段 | 转换规则                         |
+|---------------|----------------------|--------------------------------|
+| `code`        | `ts_code`            | 去掉交易所后缀                    |
+| `name`        | 本地 `stock_basic`    | 用 `code` 关联                   |
+| `trade_date`  | `trade_date`         | `YYYYMMDD` -> `YYYY-MM-DD`     |
+| `open`        | `open`               | 原值                            |
+| `high`        | `high`               | 原值                            |
+| `low`         | `low`                | 原值                            |
+| `close`       | `close`              | 原值                            |
+| `pre_close`   | `pre_close`          | 原值；这是当日涨跌幅基准价             |
+| `change`      | `change`             | 原值；也可由 `close - pre_close` 校验 |
+| `pct_chg`     | `pct_chg`            | 原值，单位 `%`                   |
+| `volume`      | `vol`                | 手 -> 股，乘以 `100`              |
+| `amount`      | `amount`             | 千元 -> 元，乘以 `1000`            |
+| `adjust_type` | -                    | `none`                         |
+
+Tushare `daily` 不提供流通市值和总市值，因此这两个字段不放在日线价格表中。后续如需要，单独建立估值或市值表。
+
+复权价格计算规则：
+
+```text
+none: 使用未复权 open/high/low/close/pre_close
+
+hfq_price_t = none_price_t * adj_factor_t
+hfq_pre_close_t = none_pre_close_t * adj_factor_t
+
+qfq_price_t = none_price_t * adj_factor_t / latest_adj_factor
+qfq_pre_close_t = none_pre_close_t * adj_factor_t / latest_adj_factor
+
+change = close - pre_close
+pct_chg = change / pre_close * 100
+```
+
+`latest_adj_factor` 默认取该股票本地数据当前最大交易日期的复权因子。每次新增交易日后，`qfq` 历史价格可能整体变化，因此 `qfq` 文件应按股票重建。
+
+建议构建顺序：
+
+```text
+1. 拉取 data/market_data/daily/none/{code}.csv
+2. 拉取 data/market_data/adj_factor/{code}.csv
+3. 本地生成 data/market_data/daily/qfq/{code}.csv
+4. 本地生成 data/market_data/daily/hfq/{code}.csv
+```
+
+试跑建议：
+
+```bash
+# 未复权日线，先测单只股票和短时间窗口。
+python3 a_share_db/scripts/fetch_daily.py \
+  --codes 600519 \
+  --start-date 20260101 \
+  --end-date 20260131 \
+  --dry-run
+
+# 复权因子，先测同一只股票和同一时间窗口。
+python3 a_share_db/scripts/fetch_adj_factor.py \
+  --codes 600519 \
+  --start-date 20260101 \
+  --end-date 20260131 \
+  --dry-run
+
+# 已经落地 none 和 adj_factor 后，本地生成 qfq/hfq。
+python3 a_share_db/scripts/build_adjusted_daily.py \
+  --codes 600519 \
+  --dry-run
+```
+
+全市场历史数据建议使用断点续跑和限速：
+
+```bash
+# 拉未复权日线。--resume 会跳过已存在且非空的单股票文件。
+python3 a_share_db/scripts/fetch_daily.py \
+  --all-stocks \
+  --start-date 19900101 \
+  --end-date 20260510 \
+  --resume \
+  --request-interval 0.13 \
+  --max-retries 3 \
+  --retry-interval 5
+
+# 拉复权因子。
+python3 a_share_db/scripts/fetch_adj_factor.py \
+  --all-stocks \
+  --start-date 19900101 \
+  --end-date 20260510 \
+  --resume \
+  --request-interval 0.13 \
+  --max-retries 3 \
+  --retry-interval 5
+
+# 本地生成 qfq/hfq。--resume 会跳过已存在且非空的 qfq/hfq 文件。
+python3 a_share_db/scripts/build_adjusted_daily.py \
+  --all-stocks \
+  --resume
+```
+
+批量脚本默认遇到单只股票失败会记录错误并继续处理后续股票；最后返回非 0 退出码并打印失败列表。修复网络或接口问题后，使用同一条命令加 `--resume` 重跑即可继续补齐。若需要调试时遇错立即停止，可加 `--stop-on-error`。
+
 ---
 
-### 3.4 ETL 日志表：`logs/etl_log.csv`
+### 3.4 复权因子表：`data/market_data/adj_factor/{code}.csv`
+
+用途：保存单只股票的复权因子，作为 `qfq/hfq` 日线表的唯一复权基础。
+
+文件示例：
+
+```text
+data/market_data/adj_factor/600519.csv
+```
+
+| Field           | 中文名   | 说明                       |
+|-----------------|--------|--------------------------|
+| `code`          | 股票代码  | 6 位股票代码                  |
+| `trade_date`    | 交易日期  | 格式：`YYYY-MM-DD`          |
+| `adjust_factor` | 复权因子  | 本地统一字段名                  |
+| `update_time`   | 更新时间  | 格式：`YYYY-MM-DD HH:MM:SS` |
+
+CSV 表头：
+
+```csv
+code,trade_date,adjust_factor,update_time
+```
+
+唯一键：
+
+```text
+code + trade_date
+```
+
+Tushare `adj_factor` 字段转换关系：
+
+| 正式表字段       | Tushare adj_factor 原始字段 |
+|----------------|----------------------------|
+| `code`         | `ts_code`                  |
+| `trade_date`   | `trade_date`               |
+| `adjust_factor` | `adj_factor`              |
+
+原始复权因子如需保留，存放在：
+
+```text
+data/raw/adj_factor/tushare/{code}.csv
+```
+
+---
+
+### 3.5 ETL 日志表：`data/logs/etl_log.csv`
 
 用途：记录每次抓取任务的执行情况。
 
@@ -355,7 +521,7 @@ job_name,source,start_time,end_time,status,row_count,error_message
 
 ---
 
-### 3.5 更新状态表：`logs/update_status.csv`
+### 3.6 更新状态表：`data/logs/update_status.csv`
 
 用途：记录每只股票、每种复权类型已经更新到哪一天，用于增量更新。
 
@@ -397,6 +563,7 @@ scripts/ 下的 ETL 脚本只能引用这些常量，不在脚本内部重复定
 | 文件                          | 用途                         |
 |-----------------------------|----------------------------|
 | `constant/stock_basic.py`   | 股票基础信息字段、Tushare 字段、上市状态映射 |
+| `constant/daily.py`         | 日线行情字段、复权因子字段、复权类型       |
 | `constant/trade_calendar.py` | 交易日历字段、Tushare 字段、默认交易所列表 |
 
 不同数据源使用不同代码格式。主表只保存本地标准字段 `code` 和 `exchange`，第三方代码格式由 `scripts/provider_codes.py` 按需转换。
@@ -433,7 +600,7 @@ scripts/ 下的 ETL 脚本只能引用这些常量，不在脚本内部重复定
 4. 读取 update_status.csv
 5. 找到每只股票的 last_trade_date
 6. 从下一个交易日开始抓取日线数据
-7. 写入 market_data/daily/{adjust_type}/{code}.csv
+7. 写入 data/market_data/daily/{adjust_type}/{code}.csv
 8. 按 code + trade_date + adjust_type 去重
 9. 按 trade_date 升序排序
 10. 更新 update_status.csv
@@ -447,13 +614,16 @@ scripts/ 下的 ETL 脚本只能引用这些常量，不在脚本内部重复定
 第一阶段只实现以下文件：
 
 ```text
-metadata/stock_basic.csv
-metadata/raw_tushare_stock_basic.csv
-metadata/raw_tushare_trade_calendar.csv
-metadata/trade_calendar.csv
-market_data/daily/qfq/{code}.csv
-logs/etl_log.csv
-logs/update_status.csv
+data/metadata/stock_basic.csv
+data/metadata/raw_tushare_stock_basic.csv
+data/metadata/raw_tushare_trade_calendar.csv
+data/metadata/trade_calendar.csv
+data/market_data/daily/none/{code}.csv
+data/market_data/adj_factor/{code}.csv
+data/market_data/daily/qfq/{code}.csv
+data/market_data/daily/hfq/{code}.csv
+data/logs/etl_log.csv
+data/logs/update_status.csv
 ```
 
 优先级：
@@ -463,9 +633,11 @@ P0: stock_basic.csv
 P0: raw_tushare_stock_basic.csv
 P0: raw_tushare_trade_calendar.csv
 P0: trade_calendar.csv
+P0: none daily data
+P0: adj_factor data
 P0: qfq daily data
+P0: hfq daily data
 P0: update_status.csv
-P1: none / hfq daily data
 P2: financials / announcements / valuation
 ```
 
@@ -480,7 +652,7 @@ valuation/
 financials/
 corporate_actions/
 announcements/
-raw/
+data/raw/
 ```
 
 其中：
