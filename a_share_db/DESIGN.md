@@ -184,6 +184,14 @@ python3 a_share_db/scripts/fetch_stock_basic.py \
 Tushare `trade_cal` 字段是数据源语义：`exchange/cal_date/is_open/pretrade_date`。
 正式表使用本地语义，并保留 `exchange`，因为不同交易所交易日历可能不同。
 
+北交所处理规则：
+
+```text
+Tushare trade_cal 当前未提供 BSE 参数。
+北交所股票在回测或实盘中遇到 exchange=BSE 时，直接复用 SSE 交易日历。
+raw_tushare_trade_calendar.csv 只保存 Tushare 实际返回的交易所；正式逻辑层可以按需派生或查询 BSE -> SSE 日历映射。
+```
+
 | Field                 | 中文名    | 说明                       |
 |-----------------------|---------|--------------------------|
 | `exchange`            | 交易所     | `SSE` / `SZSE` 等本地交易所代码 |
