@@ -1,0 +1,4 @@
+a_share_db/data/
+
+__pycache__/
+*.py[cod]
