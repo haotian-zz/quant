@@ -4,6 +4,8 @@
 
 Local data is written under `a_share_db/data/`. This directory is ignored by git because it can become large and should be rebuilt or synced separately.
 
+Long-running commands share `a_share_db.progress.ProgressReporter` and expose `--progress-every` for progress and ETA output.
+
 ## Setup
 
 Install dependencies:
@@ -62,6 +64,7 @@ python3 a_share_db/scripts/fetch_daily.py \
   --end-date 20260510 \
   --resume \
   --request-interval 0.13 \
+  --progress-every 50 \
   --max-retries 3 \
   --retry-interval 5
 
@@ -71,6 +74,7 @@ python3 a_share_db/scripts/fetch_adj_factor.py \
   --end-date 20260510 \
   --resume \
   --request-interval 0.13 \
+  --progress-every 50 \
   --max-retries 3 \
   --retry-interval 5
 
@@ -80,6 +84,18 @@ python3 a_share_db/scripts/build_adjusted_daily.py \
 ```
 
 If a long job fails midway, rerun the same command with `--resume`. Existing non-empty per-stock files will be skipped.
+
+After the initial build, use the incremental update command instead of fetching full history again:
+
+```bash
+python3 a_share_db/scripts/update_daily.py \
+  --all-stocks \
+  --end-date 20260510 \
+  --request-interval 0.13 \
+  --progress-every 50 \
+  --max-retries 3 \
+  --retry-interval 5
+```
 
 ## Scripts
 
@@ -222,6 +238,7 @@ python3 a_share_db/scripts/fetch_daily.py \
   --end-date 20260510 \
   --resume \
   --request-interval 0.13 \
+  --progress-every 50 \
   --max-retries 3 \
   --retry-interval 5
 ```
@@ -271,6 +288,7 @@ python3 a_share_db/scripts/fetch_adj_factor.py \
   --end-date 20260510 \
   --resume \
   --request-interval 0.13 \
+  --progress-every 50 \
   --max-retries 3 \
   --retry-interval 5
 ```
@@ -322,8 +340,11 @@ Build all stocks with resume:
 ```bash
 python3 a_share_db/scripts/build_adjusted_daily.py \
   --all-stocks \
-  --resume
+  --resume \
+  --progress-every 50
 ```
+
+Progress output prints processed stocks, percent, elapsed time, ETA, rows, skipped count, and failures.
 
 Import example:
 
@@ -332,6 +353,74 @@ from a_share_db.scripts.build_adjusted_daily import run_build_adjusted_daily
 
 result = run_build_adjusted_daily(codes=["600519"], adjust_types=["qfq"], dry_run=True)
 print(result["row_count"])
+```
+
+### `scripts/update_daily.py`
+
+Incrementally updates existing daily files. For each stock, it reads the max local `trade_date` from:
+
+```text
+a_share_db/data/market_data/daily/none/{code}.csv
+```
+
+Then it fetches from the next calendar day through `--end-date`, merges by `code + trade_date`, sorts the file, and rewrites the same CSV path atomically. This keeps file names stable and avoids downloading full history every time.
+
+By default it also updates `adj_factor` and rebuilds qfq/hfq for stocks that changed. qfq/hfq are rebuilt rather than appended because qfq prices can change when the latest adjustment factor changes.
+
+Smoke test a few stocks without writing files:
+
+```bash
+python3 a_share_db/scripts/update_daily.py \
+  --all-stocks \
+  --limit-stocks 5 \
+  --end-date 20260510 \
+  --dry-run
+```
+
+Update all existing local daily files:
+
+```bash
+python3 a_share_db/scripts/update_daily.py \
+  --all-stocks \
+  --end-date 20260510 \
+  --request-interval 0.13 \
+  --progress-every 50 \
+  --max-retries 3 \
+  --retry-interval 5
+```
+
+Initialize missing stocks during an update:
+
+```bash
+python3 a_share_db/scripts/update_daily.py \
+  --all-stocks \
+  --init-missing \
+  --start-date 19900101 \
+  --end-date 20260510
+```
+
+Only update unadjusted daily files and skip adjusted outputs:
+
+```bash
+python3 a_share_db/scripts/update_daily.py \
+  --all-stocks \
+  --no-adj-factor \
+  --no-adjusted
+```
+
+Import example:
+
+```python
+import os
+from a_share_db.scripts.update_daily import run_update_daily
+
+result = run_update_daily(
+    token=os.environ["TUSHARE_TOKEN"],
+    codes=["600519"],
+    end_date="20260510",
+    dry_run=True,
+)
+print(result["daily_new_rows"])
 ```
 
 ### `scripts/provider_codes.py`
@@ -361,6 +450,12 @@ print(build_eastmoney_secid("600519", "SSE"))   # 1.600519
 
 `--request-interval 0.13` keeps requests under roughly 500 calls per minute, before retries and provider-side variance.
 
+`--progress-every 50` prints progress and ETA every 50 stocks for long-running commands. Use `--progress-every 10` for more frequent updates, or `--progress-every 0` to disable it.
+
 `--stop-on-error` is useful for debugging. Without it, per-stock jobs record failures and continue; rerun with `--resume` after fixing the issue.
 
 Existing output files are backed up to `a_share_db/data/backups/` before replacement unless `--no-backup` is passed.
+
+Development convention: any new command that loops over many stocks should reuse `a_share_db.progress.ProgressReporter` and expose a `--progress-every` option.
+
+Reusable logic should live in package modules instead of being copied across scripts. Keep `scripts/*.py` focused on CLI parsing and orchestration; shared behavior such as progress reporting, provider code conversion, date/file helpers, merge logic, and constants should be extracted into importable modules.

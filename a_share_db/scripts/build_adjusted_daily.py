@@ -29,6 +29,7 @@ from a_share_db.constant.paths import (
     ETL_LOG_PATH,
     STOCK_BASIC_PATH,
 )
+from a_share_db.progress import ProgressReporter
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -105,6 +106,12 @@ def parse_args() -> argparse.Namespace:
         "--resume",
         action="store_true",
         help="Skip adjusted files that already exist and are non-empty.",
+    )
+    parser.add_argument(
+        "--progress-every",
+        type=int,
+        default=50,
+        help="Print progress every N stocks. Use 0 to disable progress output. Default: 50.",
     )
     parser.add_argument(
         "--stop-on-error",
@@ -342,6 +349,7 @@ def run_build_adjusted_daily(
     backup_root: Path = DEFAULT_BACKUP_ROOT,
     create_backup: bool = True,
     resume: bool = False,
+    progress_every: int = 0,
     stop_on_error: bool = False,
 ) -> dict:
     start_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -359,8 +367,9 @@ def run_build_adjusted_daily(
         requested_codes = load_requested_codes(codes, codes_file)
         selected_codes = select_codes(stock_basic, requested_codes, all_stocks, limit_stocks)
         stock_count = len(selected_codes)
+        progress = ProgressReporter(stock_count, every=progress_every, label="Build adjusted daily")
 
-        for code in selected_codes:
+        for index, code in enumerate(selected_codes, start=1):
             try:
                 none_daily, adj_factor = read_daily_inputs(code, Path(none_root), Path(adj_factor_root))
                 for adjust_type in adjust_types:
@@ -386,6 +395,13 @@ def run_build_adjusted_daily(
                 if stop_on_error:
                     raise
                 continue
+            finally:
+                progress.maybe_print(
+                    index,
+                    row_count=row_count,
+                    skipped_count=skipped_count,
+                    failure_count=len(failures),
+                )
 
         status = "partial" if failures else "success"
         if failures:
@@ -438,6 +454,7 @@ def main() -> int:
             backup_root=args.backup_root,
             create_backup=not args.no_backup,
             resume=args.resume,
+            progress_every=args.progress_every,
             stop_on_error=args.stop_on_error,
         )
         if args.dry_run:

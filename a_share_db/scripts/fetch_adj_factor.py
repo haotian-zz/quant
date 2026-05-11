@@ -29,6 +29,7 @@ from a_share_db.constant.paths import (
     RAW_TUSHARE_ADJ_FACTOR_ROOT,
     STOCK_BASIC_PATH,
 )
+from a_share_db.progress import ProgressReporter
 from a_share_db.scripts.provider_codes import build_tushare_ts_code
 
 
@@ -115,6 +116,12 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.13,
         help="Seconds to sleep between Tushare requests. Default: 0.13.",
+    )
+    parser.add_argument(
+        "--progress-every",
+        type=int,
+        default=50,
+        help="Print progress every N stocks. Use 0 to disable progress output. Default: 50.",
     )
     parser.add_argument(
         "--max-retries",
@@ -396,6 +403,7 @@ def run_adj_factor_etl(
     create_backup: bool = True,
     resume: bool = False,
     request_interval: float = 0.13,
+    progress_every: int = 0,
     max_retries: int = 3,
     retry_interval: float = 5.0,
     stop_on_error: bool = False,
@@ -423,16 +431,24 @@ def run_adj_factor_etl(
         selected_codes = load_requested_codes(codes, codes_file)
         stocks = select_stock_rows(stock_basic, selected_codes, all_stocks, limit_stocks)
         stock_count = len(stocks)
+        progress = ProgressReporter(stock_count, every=progress_every, label="Fetch adj_factor")
 
-        for stock in stocks.to_dict("records"):
+        for index, stock in enumerate(stocks.to_dict("records"), start=1):
             code = stock["code"]
             output_path = Path(output_root) / f"{code}.csv"
-            if resume and output_path.exists() and output_path.stat().st_size > 0:
-                skipped_count += 1
-                continue
-
-            ts_code = build_tushare_ts_code(code, stock.get("exchange", ""))
+            ts_code = ""
             try:
+                if resume and output_path.exists() and output_path.stat().st_size > 0:
+                    skipped_count += 1
+                    progress.maybe_print(
+                        index,
+                        row_count=row_count,
+                        skipped_count=skipped_count,
+                        failure_count=len(failures),
+                    )
+                    continue
+
+                ts_code = build_tushare_ts_code(code, stock.get("exchange", ""))
                 raw = fetch_with_retries(
                     token,
                     ts_code,
@@ -445,6 +461,12 @@ def run_adj_factor_etl(
                 failures.append({"code": code, "ts_code": ts_code, "error": str(exc)})
                 if stop_on_error:
                     raise
+                progress.maybe_print(
+                    index,
+                    row_count=row_count,
+                    skipped_count=skipped_count,
+                    failure_count=len(failures),
+                )
                 continue
 
             normalized = convert_tushare_adj_factor(raw)
@@ -474,6 +496,12 @@ def run_adj_factor_etl(
 
             if request_interval:
                 time.sleep(request_interval)
+            progress.maybe_print(
+                index,
+                row_count=row_count,
+                skipped_count=skipped_count,
+                failure_count=len(failures),
+            )
 
         status = "partial" if failures else "success"
         if failures:
@@ -536,6 +564,7 @@ def main() -> int:
             create_backup=not args.no_backup,
             resume=args.resume,
             request_interval=args.request_interval,
+            progress_every=args.progress_every,
             max_retries=args.max_retries,
             retry_interval=args.retry_interval,
             stop_on_error=args.stop_on_error,

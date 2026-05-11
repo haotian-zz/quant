@@ -50,6 +50,8 @@ a_share_db/
 │   ├── daily.py
 │   └── trade_calendar.py
 │
+├── progress.py
+│
 └── scripts/
     ├── provider_codes.py
     ├── fetch_stock_basic.py
@@ -57,6 +59,7 @@ a_share_db/
     ├── fetch_adj_factor.py
     ├── fetch_daily.py
     ├── build_adjusted_daily.py
+    ├── update_daily.py
     └── update_all.py
 ```
 
@@ -431,6 +434,7 @@ python3 a_share_db/scripts/fetch_daily.py \
   --end-date 20260510 \
   --resume \
   --request-interval 0.13 \
+  --progress-every 50 \
   --max-retries 3 \
   --retry-interval 5
 
@@ -441,13 +445,15 @@ python3 a_share_db/scripts/fetch_adj_factor.py \
   --end-date 20260510 \
   --resume \
   --request-interval 0.13 \
+  --progress-every 50 \
   --max-retries 3 \
   --retry-interval 5
 
 # 本地生成 qfq/hfq。--resume 会跳过已存在且非空的 qfq/hfq 文件。
 python3 a_share_db/scripts/build_adjusted_daily.py \
   --all-stocks \
-  --resume
+  --resume \
+  --progress-every 50
 ```
 
 批量脚本默认遇到单只股票失败会记录错误并继续处理后续股票；最后返回非 0 退出码并打印失败列表。修复网络或接口问题后，使用同一条命令加 `--resume` 重跑即可继续补齐。若需要调试时遇错立即停止，可加 `--stop-on-error`。
@@ -597,19 +603,80 @@ scripts/ 下的 ETL 脚本只能引用这些常量，不在脚本内部重复定
 1. 更新 stock_basic.csv
 2. 更新 trade_calendar.csv
 3. 判断今天是否为交易日
-4. 读取 update_status.csv
-5. 找到每只股票的 last_trade_date
-6. 从下一个交易日开始抓取日线数据
-7. 写入 data/market_data/daily/{adjust_type}/{code}.csv
-8. 按 code + trade_date + adjust_type 去重
-9. 按 trade_date 升序排序
-10. 更新 update_status.csv
-11. 写入 etl_log.csv
+4. 对每只股票读取 data/market_data/daily/none/{code}.csv 的最大 trade_date
+5. 从 max(trade_date)+1 到 end_date 抓取 Tushare daily
+6. 读取旧 none 文件，与新增数据按 code + trade_date 合并去重
+7. 用临时文件原子替换原 none 文件，替换前按配置备份旧文件
+8. 同步更新 data/market_data/adj_factor/{code}.csv，复权因子起点按复权因子文件自己的最大 trade_date 计算
+9. 对本次有变化的股票重建 qfq/hfq 文件
+10. 写入 etl_log.csv
+```
+
+增量更新以每个股票本地 CSV 的最大 `trade_date` 为准，不依赖全局“上次运行时间”。这样某只股票中途失败时，下一次重跑会只补这只股票缺失的区间。
+
+`qfq/hfq` 不直接追加。`qfq` 使用当前本地最大交易日的复权因子作为最新因子，新增交易日或复权因子变化后，历史前复权价格可能整体变化，因此增量更新后只对受影响股票重建对应 qfq/hfq 文件。
+
+示例：
+
+```bash
+python3 a_share_db/scripts/update_daily.py \
+  --all-stocks \
+  --end-date 20260510 \
+  --request-interval 0.13 \
+  --progress-every 50 \
+  --max-retries 3 \
+  --retry-interval 5
 ```
 
 ---
 
-## 6. 第一阶段 MVP
+## 6. 命令行进度显示约定
+
+长时间运行的命令必须复用 `a_share_db.progress.ProgressReporter`，并提供 `--progress-every` 参数。
+
+进度输出至少包含：
+
+```text
+current/total, percent, elapsed, eta, rows, skipped, failed
+```
+
+默认建议每 50 只股票输出一次：
+
+```bash
+--progress-every 50
+```
+
+需要更频繁时可以用 `--progress-every 10`；需要关闭时用 `--progress-every 0`。
+
+---
+
+## 7. 代码复用约定
+
+任何可以跨脚本复用的逻辑都应该单独实现为包内模块，而不是复制到每个 `scripts/*.py` 里。
+
+适合抽离的逻辑包括：
+
+```text
+进度显示、日期格式化、文件原子写入、备份路径生成、CSV 合并去重、股票选择、provider code 转换、ETL 日志写入
+```
+
+脚本层职责应尽量保持为：
+
+```text
+解析 CLI 参数 -> 调用复用模块/ETL 函数 -> 打印执行结果
+```
+
+现有示例：
+
+```text
+a_share_db/progress.py              # 长任务进度输出
+a_share_db/scripts/provider_codes.py # 第三方代码格式转换
+a_share_db/constant/*.py            # 字段、路径、枚举等常量
+```
+
+---
+
+## 8. 第一阶段 MVP
 
 第一阶段只实现以下文件：
 
