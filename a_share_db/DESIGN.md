@@ -29,12 +29,20 @@ a_share_db/
 │   │   │   ├── none/
 │   │   │   ├── qfq/
 │   │   │   └── hfq/
+│   │   ├── minute/
+│   │   │   └── {frequency}/
+│   │   │       ├── none/
+│   │   │       ├── qfq/
+│   │   │       └── hfq/
 │   │   └── adj_factor/
 │   │
 │   ├── raw/
 │   │   ├── daily/
 │   │   │   └── {provider}/
 │   │   │       └── {adjust_type}/
+│   │   ├── minute/
+│   │   │   └── {provider}/
+│   │   │       └── {frequency}/
 │   │   └── adj_factor/
 │   │       └── {provider}/
 │   │
@@ -48,6 +56,7 @@ a_share_db/
 ├── constant/
 │   ├── stock_basic.py
 │   ├── daily.py
+│   ├── minute.py
 │   ├── trade_calendar.py
 │   └── commands.py
 │
@@ -63,6 +72,7 @@ a_share_db/
     ├── market/
     │   ├── fetch_adj_factor.py
     │   ├── fetch_daily.py
+    │   ├── fetch_minute.py
     │   ├── build_adjusted_daily.py
     │   └── update_daily.py
     ├── workflows/
@@ -510,7 +520,108 @@ data/raw/adj_factor/tushare/{code}.csv
 
 ---
 
-### 3.5 ETL 日志表：`data/logs/etl_log.csv`
+### 3.5 历史分钟行情表：`data/market_data/minute/{frequency}/{adjust_type}/{code}.csv`
+
+用途：存储单只股票的历史分钟 K 线行情。Tushare `stk_mins` 是当前数据来源；另一张参考表提供了更清晰的“K线结束时间”语义，因此本地字段采用 `bar_end_time`。
+
+文件示例：
+
+```text
+data/market_data/minute/1m/none/600519.csv
+data/market_data/minute/5m/none/600519.csv
+data/market_data/minute/1m/qfq/600519.csv
+data/market_data/minute/1m/hfq/600519.csv
+```
+
+第一阶段先落地 `none` 未复权分钟数据。`qfq/hfq` 目录预留给后续使用日级复权因子本地生成分钟复权数据。
+
+| Field          | 中文名      | 说明                                      |
+| -------------- | --------- | ----------------------------------------- |
+| `code`         | 股票代码     | 6 位股票代码，例如 `600519`                     |
+| `name`         | 股票名称     | 来自本地 `stock_basic.csv`                    |
+| `trade_date`   | 交易日期     | 从 `bar_end_time` 派生，格式：`YYYY-MM-DD`       |
+| `bar_end_time` | K线结束时间   | 格式：`YYYY-MM-DD HH:MM:SS`                  |
+| `frequency`    | K线频率     | `1m` / `5m` / `15m` / `30m` / `60m`        |
+| `open`         | 开盘价      | 当前分钟 K 线开盘价                              |
+| `high`         | 最高价      | 当前分钟 K 线最高价                              |
+| `low`          | 最低价      | 当前分钟 K 线最低价                              |
+| `close`        | 收盘价      | 当前分钟 K 线收盘价                              |
+| `volume`       | 成交量      | 单位：股；Tushare `stk_mins.vol` 和参考表均为股       |
+| `amount`       | 成交额      | 单位：元；Tushare `stk_mins.amount` 和参考表均为元    |
+| `adjust_type`  | 复权类型     | `none` / `qfq` / `hfq`；第一阶段只写 `none`       |
+| `update_time`  | 更新时间     | 格式：`YYYY-MM-DD HH:MM:SS`                  |
+
+CSV 表头：
+
+```csv
+code,name,trade_date,bar_end_time,frequency,open,high,low,close,volume,amount,adjust_type,update_time
+```
+
+唯一键：
+
+```text
+code + frequency + adjust_type + bar_end_time
+```
+
+正式分钟表不保存 `ts_code`、`sh600000`、`symbol`、`secid` 或 provider 名称。第三方代码格式由 `a_share_db/utils/provider_codes.py` 按需生成。
+
+Tushare `stk_mins` 字段转换关系：
+
+| 正式表字段      | Tushare stk_mins 原始字段 | 转换规则                              |
+| --------------- | ------------------------ | ------------------------------------- |
+| `code`          | `ts_code`                | 去掉交易所后缀                         |
+| `name`          | 本地 `stock_basic`        | 用 `code` 关联                         |
+| `trade_date`    | `trade_time`             | 取日期部分，格式化为 `YYYY-MM-DD`       |
+| `bar_end_time`  | `trade_time`             | 格式化为 `YYYY-MM-DD HH:MM:SS`         |
+| `frequency`     | 请求参数 `freq`           | `1min` -> `1m`，`5min` -> `5m` 等       |
+| `open`          | `open`                   | 原值                                  |
+| `high`          | `high`                   | 原值                                  |
+| `low`           | `low`                    | 原值                                  |
+| `close`         | `close`                  | 原值                                  |
+| `volume`        | `vol`                    | 原值；单位已经是股                       |
+| `amount`        | `amount`                 | 原值；单位已经是元                       |
+| `adjust_type`   | -                        | `none`                                |
+
+参考表字段转换关系：
+
+| 正式表字段      | 参考表字段      | 转换规则                              |
+| --------------- | ------------- | ------------------------------------- |
+| `code`          | `股票代码`      | `sh600000` -> `600000`，交易所前缀不落表 |
+| `name`          | 本地 `stock_basic` | 用 `code` 关联                      |
+| `trade_date`    | `k线结束时间`    | 取日期部分                              |
+| `bar_end_time`  | `k线结束时间`    | 原时间格式标准化                         |
+| `frequency`     | -             | 文件或导入参数指定，默认可按 `1m` 处理       |
+| `open`          | `开盘价`        | 原值                                  |
+| `high`          | `最高价`        | 原值                                  |
+| `low`           | `最低价`        | 原值                                  |
+| `close`         | `收盘价`        | 原值                                  |
+| `volume`        | `成交量`        | 原值；单位为股                           |
+| `amount`        | `成交额`        | 原值；单位为元                           |
+| `adjust_type`   | -             | `none`                                |
+
+分钟行情不放 `pre_close`、`change`、`pct_chg`。这些字段在分钟级别容易因为跨午休、跨日、停牌和集合竞价语义产生歧义，后续策略或指标层可以按需要从 `close` 序列计算。
+
+分钟接口单次最多 8000 行。`fetch_minute.py` 默认读取本地 `trade_calendar.csv`，按频率自动选择每个 request 覆盖的最大安全交易日数：
+
+| 频率 | 安全估算 bar/交易日 | 默认交易日/request | 最大估算行数 |
+| ---- | ------------------ | ------------------ | ------------ |
+| `1m` | 242                | 33                 | 7986         |
+| `5m` | 49                 | 163                | 7987         |
+| `15m` | 17                | 470                | 7990         |
+| `30m` | 9                 | 888                | 7992         |
+| `60m` | 5                 | 1599               | 7995         |
+
+如果本地交易日历不存在，脚本会退回到 `--window-days` 自然日窗口。正常构建前应先生成 `trade_calendar.csv`。
+
+原始分钟数据如需保留，存放在：
+
+```text
+data/raw/minute/tushare/{frequency}/{code}.csv
+```
+
+---
+
+### 3.6 ETL 日志表：`data/logs/etl_log.csv`
 
 用途：记录每次抓取任务的执行情况。
 
@@ -532,7 +643,7 @@ job_name,source,start_time,end_time,status,row_count,error_message
 
 ---
 
-### 3.6 更新状态表：`data/logs/update_status.csv`
+### 3.7 更新状态表：`data/logs/update_status.csv`
 
 用途：记录每只股票、每种复权类型已经更新到哪一天，用于增量更新。
 
@@ -575,6 +686,7 @@ scripts/ 下的 ETL 脚本只能引用这些常量，不在脚本内部重复定
 |-----------------------------|----------------------------|
 | `constant/stock_basic.py`   | 股票基础信息字段、Tushare 字段、上市状态映射 |
 | `constant/daily.py`         | 日线行情字段、复权因子字段、复权类型       |
+| `constant/minute.py`        | 分钟行情字段、分钟频率、provider 频率映射 |
 | `constant/trade_calendar.py` | 交易日历字段、Tushare 字段、默认交易所列表 |
 
 不同数据源使用不同代码格式。主表只保存本地标准字段 `code` 和 `exchange`，第三方代码格式由 `a_share_db/utils/provider_codes.py` 按需转换。
@@ -745,6 +857,7 @@ data/market_data/daily/none/{code}.csv
 data/market_data/adj_factor/{code}.csv
 data/market_data/daily/qfq/{code}.csv
 data/market_data/daily/hfq/{code}.csv
+data/market_data/minute/{frequency}/none/{code}.csv
 data/logs/etl_log.csv
 data/logs/update_status.csv
 ```
@@ -760,6 +873,7 @@ P0: none daily data
 P0: adj_factor data
 P0: qfq daily data
 P0: hfq daily data
+P1: none minute data
 P0: update_status.csv
 P2: financials / announcements / valuation
 ```

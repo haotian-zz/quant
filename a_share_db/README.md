@@ -34,6 +34,11 @@ a_share_db/data/
 │   │   ├── none/
 │   │   ├── qfq/
 │   │   └── hfq/
+│   ├── minute/
+│   │   └── {frequency}/
+│   │       ├── none/
+│   │       ├── qfq/
+│   │       └── hfq/
 │   └── adj_factor/
 ├── raw/
 ├── backups/
@@ -339,6 +344,72 @@ result = run_adj_factor_etl(
     codes=["600519"],
     start_date="20260101",
     end_date="20260131",
+    dry_run=True,
+)
+print(result["row_count"])
+```
+
+### `scripts/market/fetch_minute.py`
+
+Fetches Tushare `stk_mins` and writes unadjusted minute bars by stock and frequency:
+
+```text
+a_share_db/data/market_data/minute/{frequency}/none/{code}.csv
+```
+
+Formal output keeps local fields only. Tushare `ts_code` and provider `freq` are converted inside the script.
+
+Request windows are sized by frequency using local `trade_calendar.csv` so each Tushare request stays below 8000 rows while covering as many trading days as possible. Defaults are `1m=33`, `5m=163`, `15m=470`, `30m=888`, `60m=1599` trading days per request. Use `--window-trading-days` only when you need to override this.
+
+Single-stock smoke test:
+
+```bash
+python3 a_share_db/scripts/market/fetch_minute.py \
+  --codes 600519 \
+  --frequencies 1m \
+  --start-date "2026-01-05 09:30:00" \
+  --end-date "2026-01-05 15:00:00" \
+  --dry-run
+```
+
+Fetch a short multi-frequency sample:
+
+```bash
+python3 a_share_db/scripts/market/fetch_minute.py \
+  --codes 600519 000001 \
+  --frequencies 1m 5m \
+  --start-date 20260101 \
+  --end-date 20260131 \
+  --progress-every 1
+```
+
+Fetch historical minute data with resume and rate limiting:
+
+```bash
+python3 a_share_db/scripts/market/fetch_minute.py \
+  --all-stocks \
+  --frequencies 1m \
+  --start-date 20160101 \
+  --end-date 20260510 \
+  --resume \
+  --request-interval 0.13 \
+  --progress-every 10 \
+  --max-retries 3 \
+  --retry-interval 5
+```
+
+Import example:
+
+```python
+import os
+from a_share_db.scripts.market.fetch_minute import run_minute_etl
+
+result = run_minute_etl(
+    token=os.environ["TUSHARE_TOKEN"],
+    codes=["600519"],
+    frequencies=["1m"],
+    start_date="2026-01-05 09:30:00",
+    end_date="2026-01-05 15:00:00",
     dry_run=True,
 )
 print(result["row_count"])

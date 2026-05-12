@@ -27,12 +27,15 @@ DAILY_NONE_ROOT = DAILY_ROOT / "none"
 DAILY_QFQ_ROOT = DAILY_ROOT / "qfq"
 DAILY_HFQ_ROOT = DAILY_ROOT / "hfq"
 ADJ_FACTOR_ROOT = MARKET_DATA_ROOT / "adj_factor"
+MINUTE_ROOT = MARKET_DATA_ROOT / "minute"
 
 # Raw provider files are optional and kept away from curated local tables.
 RAW_DAILY_ROOT = RAW_ROOT / "daily"
 RAW_TUSHARE_DAILY_NONE_ROOT = RAW_DAILY_ROOT / "tushare" / "none"
 RAW_ADJ_FACTOR_ROOT = RAW_ROOT / "adj_factor"
 RAW_TUSHARE_ADJ_FACTOR_ROOT = RAW_ADJ_FACTOR_ROOT / "tushare"
+RAW_MINUTE_ROOT = RAW_ROOT / "minute"
+RAW_TUSHARE_MINUTE_ROOT = RAW_MINUTE_ROOT / "tushare"
 
 # ETL logs record command status without becoming part of the data schema.
 ETL_LOG_PATH = LOG_ROOT / "etl_log.csv"
