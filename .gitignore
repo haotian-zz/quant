@@ -1,4 +1,4 @@
 a_share_db/data/
-
+.idea
 __pycache__/
 *.py[cod]
