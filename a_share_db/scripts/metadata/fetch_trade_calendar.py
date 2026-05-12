@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Iterable
 
 
-PACKAGE_ROOT = Path(__file__).resolve().parents[2]
+PACKAGE_ROOT = Path(__file__).resolve().parents[3]
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
@@ -35,7 +35,7 @@ from a_share_db.constant.paths import (
 )
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT = TRADE_CALENDAR_PATH
 DEFAULT_RAW_OUTPUT = RAW_TUSHARE_TRADE_CALENDAR_PATH
 DEFAULT_LOG = ETL_LOG_PATH
@@ -104,10 +104,13 @@ def parse_args() -> argparse.Namespace:
         help=f"Backup directory for existing CSV files. Default: {DEFAULT_BACKUP_ROOT}",
     )
     parser.add_argument(
-        "--no-backup",
+        "--backup",
+        dest="create_backup",
         action="store_true",
-        help="Do not move existing output files to backups before replacing them.",
+        help="Move existing output files to backups before replacing them. Default: off.",
     )
+    parser.add_argument("--no-backup", dest="create_backup", action="store_false", help=argparse.SUPPRESS)
+    parser.set_defaults(create_backup=False)
     return parser.parse_args()
 
 
@@ -157,6 +160,7 @@ def fetch_from_tushare(
             continue
 
         if frame is not None and not frame.empty:
+            # Tushare may omit exchange when default exchange behavior is used.
             for column in TUSHARE_TRADE_CALENDAR_FIELDS:
                 if column not in frame.columns:
                     frame[column] = ""
@@ -184,6 +188,7 @@ def normalize_exchange_args(exchanges: Iterable[str]) -> list[str]:
         if not value:
             continue
         if value == "ALL":
+            # ALL is a local shortcut, not a Tushare exchange code.
             return ALL_TRADE_CAL_EXCHANGES.copy()
         normalized.append(value)
     return normalized or DEFAULT_A_SHARE_EXCHANGES.copy()
@@ -197,6 +202,7 @@ def convert_tushare_trade_calendar(raw):
 
     output["exchange"] = raw["exchange"].fillna("").astype(str).str.strip().str.upper()
     output["calendar_date"] = raw["cal_date"].map(format_tushare_date)
+    # Store trading-day flags as "1"/"0" strings so CSV typing stays stable.
     output["is_trading_day"] = raw["is_open"].map(normalize_trading_day_flag)
     output["previous_trade_date"] = raw["pretrade_date"].map(format_tushare_date)
     output["update_time"] = update_time
@@ -235,13 +241,14 @@ def write_csv(
     path: Path,
     backup_root: Path = DEFAULT_BACKUP_ROOT,
     backup_timestamp: str | None = None,
-    create_backup: bool = True,
+    create_backup: bool = False,
 ) -> Path | None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = path.with_suffix(path.suffix + ".tmp")
     frame.to_csv(temp_path, index=False, encoding="utf-8", lineterminator="\n")
     backup_path = None
 
+    # Backups are opt-in. The normal path uses atomic temp-file replacement.
     if create_backup and path.exists():
         backup_timestamp = backup_timestamp or build_backup_timestamp()
         backup_path = build_backup_path(path, backup_root, backup_timestamp)
@@ -267,6 +274,7 @@ def build_backup_path(path: Path, backup_root: Path, backup_timestamp: str) -> P
     try:
         relative_path = path.resolve().relative_to(PROJECT_ROOT.resolve())
     except ValueError:
+        # Keep backups for external paths inside backup_root.
         if path.is_absolute():
             relative_path = Path("external").joinpath(*path.parts[1:])
         else:
@@ -325,7 +333,7 @@ def run_trade_calendar_etl(
     limit: int | None = None,
     dry_run: bool = False,
     backup_root: Path = DEFAULT_BACKUP_ROOT,
-    create_backup: bool = True,
+    create_backup: bool = False,
 ) -> dict:
     """Fetch trade calendars and write local CSV outputs."""
     if not token:
@@ -348,6 +356,7 @@ def run_trade_calendar_etl(
         normalized = convert_tushare_trade_calendar(raw)
         total_row_count = len(normalized)
 
+        # Limit is only a smoke-test guard and does not change fetch behavior.
         if limit is not None:
             if limit < 0:
                 raise ValueError("limit must be greater than or equal to 0.")
@@ -429,7 +438,7 @@ def main() -> int:
             limit=args.limit,
             dry_run=args.dry_run,
             backup_root=args.backup_root,
-            create_backup=not args.no_backup,
+            create_backup=args.create_backup,
         )
         if args.dry_run:
             print(

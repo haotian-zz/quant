@@ -8,6 +8,7 @@ from typing import TextIO
 
 
 def format_duration(seconds: float) -> str:
+    """Format a duration for compact terminal progress output."""
     seconds = max(int(seconds), 0)
     hours, remainder = divmod(seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
@@ -48,6 +49,7 @@ class ProgressReporter:
     ) -> None:
         if not self.enabled:
             return
+        # Print first, every N items, and final item so long jobs show movement.
         if current != 1 and current % self.every != 0 and current != self.total:
             return
         self.print(
@@ -69,6 +71,7 @@ class ProgressReporter:
         if self.total <= 0:
             return
         elapsed = time.time() - self.started_at
+        # ETA is based on observed average speed, so it becomes steadier over time.
         rate = current / elapsed if elapsed > 0 else 0
         remaining = (self.total - current) / rate if rate > 0 else 0
         percent = current / self.total * 100

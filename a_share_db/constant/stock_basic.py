@@ -1,5 +1,6 @@
 """Constants for stock basic metadata tables and provider fields."""
 
+# Tushare fields are copied only into raw files or converted into local fields.
 TUSHARE_STOCK_BASIC_FIELDS = [
     "ts_code",
     "symbol",
@@ -20,6 +21,7 @@ TUSHARE_STOCK_BASIC_FIELDS = [
     "act_ent_type",
 ]
 
+# The stock master table avoids provider-specific identifiers.
 STOCK_BASIC_COLUMNS = [
     "code",
     "name",
@@ -40,6 +42,7 @@ STOCK_BASIC_COLUMNS = [
     "update_time",
 ]
 
+# Keep this mapping near the schema so status values stay consistent.
 TUSHARE_LIST_STATUS_MAP = {
     "L": "listed",
     "D": "delisted",

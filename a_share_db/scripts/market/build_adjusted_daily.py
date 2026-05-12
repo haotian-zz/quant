@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Iterable
 
 
-PACKAGE_ROOT = Path(__file__).resolve().parents[2]
+PACKAGE_ROOT = Path(__file__).resolve().parents[3]
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
@@ -29,10 +29,10 @@ from a_share_db.constant.paths import (
     ETL_LOG_PATH,
     STOCK_BASIC_PATH,
 )
-from a_share_db.progress import ProgressReporter
+from a_share_db.utils.progress import ProgressReporter
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_STOCK_BASIC = STOCK_BASIC_PATH
 DEFAULT_NONE_ROOT = DAILY_NONE_ROOT
 DEFAULT_ADJ_FACTOR_ROOT = ADJ_FACTOR_ROOT
@@ -130,10 +130,13 @@ def parse_args() -> argparse.Namespace:
         help=f"Backup directory for existing CSV files. Default: {DEFAULT_BACKUP_ROOT}",
     )
     parser.add_argument(
-        "--no-backup",
+        "--backup",
+        dest="create_backup",
         action="store_true",
-        help="Do not move existing output files to backups before replacing them.",
+        help="Move existing output files to backups before replacing them. Default: off.",
     )
+    parser.add_argument("--no-backup", dest="create_backup", action="store_false", help=argparse.SUPPRESS)
+    parser.set_defaults(create_backup=False)
     return parser.parse_args()
 
 
@@ -155,6 +158,7 @@ def read_stock_basic(path: Path):
     if missing:
         raise ValueError(f"stock_basic missing columns: {', '.join(sorted(missing))}")
     if "status" in frame.columns:
+        # Adjusted tables are built for listed stocks by default.
         frame = frame[frame["status"].eq("listed")]
     return frame
 
@@ -215,6 +219,7 @@ def build_adjusted_daily(none_daily, adj_factor, adjust_type: str):
     if merged.empty:
         return merged.reindex(columns=DAILY_PRICE_COLUMNS)
 
+    # Align daily prices and factors by stock/date before applying formulas.
     merged = merged.sort_values(["code", "trade_date"], kind="stable").copy()
     merged["code"] = merged["code"].astype(str).str.zfill(6)
     price_columns = ["open", "high", "low", "close", "pre_close"]
@@ -222,14 +227,17 @@ def build_adjusted_daily(none_daily, adj_factor, adjust_type: str):
         merged[column] = pd.to_numeric(merged[column], errors="coerce")
 
     if adjust_type == "qfq":
+        # qfq anchors all prices to the latest available adjustment factor.
         latest_factor = merged["adjust_factor"].dropna().iloc[-1]
         multiplier = merged["adjust_factor"] / latest_factor
     else:
+        # hfq grows with the raw factor and can be appended for missing dates.
         multiplier = merged["adjust_factor"]
 
     for column in price_columns:
         merged[column] = merged[column] * multiplier
 
+    # Recompute change fields after price adjustment.
     merged["change"] = merged["close"] - merged["pre_close"]
     merged["pct_chg"] = merged["change"] / merged["pre_close"] * 100
     merged["adjust_type"] = adjust_type
@@ -256,13 +264,14 @@ def write_csv(
     path: Path,
     backup_root: Path = DEFAULT_BACKUP_ROOT,
     backup_timestamp: str | None = None,
-    create_backup: bool = True,
+    create_backup: bool = False,
 ) -> Path | None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = path.with_suffix(path.suffix + ".tmp")
     frame.to_csv(temp_path, index=False, encoding="utf-8", lineterminator="\n")
     backup_path = None
 
+    # Backup is optional; temp replacement protects against partial writes.
     if create_backup and path.exists():
         backup_timestamp = backup_timestamp or build_backup_timestamp()
         backup_path = build_backup_path(path, backup_root, backup_timestamp)
@@ -347,7 +356,7 @@ def run_build_adjusted_daily(
     write_log: bool = True,
     log_path: Path = DEFAULT_LOG,
     backup_root: Path = DEFAULT_BACKUP_ROOT,
-    create_backup: bool = True,
+    create_backup: bool = False,
     resume: bool = False,
     progress_every: int = 0,
     stop_on_error: bool = False,
@@ -375,6 +384,7 @@ def run_build_adjusted_daily(
                 for adjust_type in adjust_types:
                     output_path = Path(output_root) / adjust_type / f"{code}.csv"
                     if resume and output_path.exists() and output_path.stat().st_size > 0:
+                        # Rebuild jobs can resume by skipping completed adjusted files.
                         skipped_count += 1
                         continue
                     adjusted = build_adjusted_daily(none_daily, adj_factor, adjust_type)
@@ -452,7 +462,7 @@ def main() -> int:
             dry_run=args.dry_run,
             write_log=not args.no_log,
             backup_root=args.backup_root,
-            create_backup=not args.no_backup,
+            create_backup=args.create_backup,
             resume=args.resume,
             progress_every=args.progress_every,
             stop_on_error=args.stop_on_error,

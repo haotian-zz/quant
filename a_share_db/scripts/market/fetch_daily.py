@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Fetch A-share adjustment factors from Tushare.
+"""Fetch unadjusted A-share daily prices from Tushare.
 
 Outputs:
-data/market_data/adj_factor/{code}.csv
+data/market_data/daily/none/{code}.csv
 """
 
 from __future__ import annotations
@@ -17,33 +17,38 @@ from pathlib import Path
 from typing import Iterable
 
 
-PACKAGE_ROOT = Path(__file__).resolve().parents[2]
+PACKAGE_ROOT = Path(__file__).resolve().parents[3]
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
-from a_share_db.constant.daily import ADJ_FACTOR_COLUMNS, TUSHARE_ADJ_FACTOR_FIELDS
+from a_share_db.constant.daily import (
+    DAILY_PRICE_COLUMNS,
+    TUSHARE_AMOUNT_TO_LOCAL,
+    TUSHARE_DAILY_FIELDS,
+    TUSHARE_VOLUME_TO_LOCAL,
+)
 from a_share_db.constant.paths import (
-    ADJ_FACTOR_ROOT,
     BACKUP_ROOT,
+    DAILY_NONE_ROOT,
     ETL_LOG_PATH,
-    RAW_TUSHARE_ADJ_FACTOR_ROOT,
+    RAW_TUSHARE_DAILY_NONE_ROOT,
     STOCK_BASIC_PATH,
 )
-from a_share_db.progress import ProgressReporter
-from a_share_db.scripts.provider_codes import build_tushare_ts_code
+from a_share_db.utils.progress import ProgressReporter
+from a_share_db.utils.provider_codes import build_tushare_ts_code
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_STOCK_BASIC = STOCK_BASIC_PATH
-DEFAULT_OUTPUT_ROOT = ADJ_FACTOR_ROOT
-DEFAULT_RAW_OUTPUT_ROOT = RAW_TUSHARE_ADJ_FACTOR_ROOT
+DEFAULT_OUTPUT_ROOT = DAILY_NONE_ROOT
+DEFAULT_RAW_OUTPUT_ROOT = RAW_TUSHARE_DAILY_NONE_ROOT
 DEFAULT_LOG = ETL_LOG_PATH
 DEFAULT_BACKUP_ROOT = BACKUP_ROOT
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Fetch Tushare adj_factor data and build data/market_data/adj_factor/{code}.csv."
+        description="Fetch Tushare daily data and build data/market_data/daily/none/{code}.csv."
     )
     parser.add_argument(
         "--token",
@@ -94,7 +99,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--with-raw",
         action="store_true",
-        help="Also write raw Tushare adj_factor CSV files.",
+        help="Also write raw Tushare daily CSV files.",
     )
     parser.add_argument(
         "--limit-stocks",
@@ -152,10 +157,13 @@ def parse_args() -> argparse.Namespace:
         help=f"Backup directory for existing CSV files. Default: {DEFAULT_BACKUP_ROOT}",
     )
     parser.add_argument(
-        "--no-backup",
+        "--backup",
+        dest="create_backup",
         action="store_true",
-        help="Do not move existing output files to backups before replacing them.",
+        help="Move existing output files to backups before replacing them. Default: off.",
     )
+    parser.add_argument("--no-backup", dest="create_backup", action="store_false", help=argparse.SUPPRESS)
+    parser.set_defaults(create_backup=False)
     return parser.parse_args()
 
 
@@ -180,11 +188,12 @@ def read_stock_basic(path: Path):
     if not path.exists():
         raise FileNotFoundError(f"Missing stock_basic file: {path}")
     frame = pd.read_csv(path, dtype=str).fillna("")
-    required = {"code", "exchange"}
+    required = {"code", "name", "exchange"}
     missing = required.difference(frame.columns)
     if missing:
         raise ValueError(f"stock_basic missing columns: {', '.join(sorted(missing))}")
     if "status" in frame.columns:
+        # Default daily jobs fetch listed stocks from the local stock master.
         frame = frame[frame["status"].eq("listed")]
     return frame
 
@@ -205,6 +214,7 @@ def load_requested_codes(codes: Iterable[str] | None, codes_file: Path | None) -
     for code in selected:
         value = str(code).strip().split(".")[0].zfill(6)
         if value and value not in seen:
+            # Keep input order but remove duplicates.
             normalized.append(value)
             seen.add(value)
     return normalized
@@ -235,19 +245,20 @@ def fetch_from_tushare(token: str, ts_code: str, start_date: str | None, end_dat
     ts = import_tushare()
     ts.set_token(token)
     pro = ts.pro_api()
-    frame = pro.adj_factor(
+    frame = pro.daily(
         ts_code=ts_code,
         start_date=start_date or None,
         end_date=end_date or None,
-        fields=",".join(TUSHARE_ADJ_FACTOR_FIELDS),
+        fields=",".join(TUSHARE_DAILY_FIELDS),
     )
     pd = import_pandas()
     if frame is None:
-        frame = pd.DataFrame(columns=TUSHARE_ADJ_FACTOR_FIELDS)
-    for column in TUSHARE_ADJ_FACTOR_FIELDS:
+        frame = pd.DataFrame(columns=TUSHARE_DAILY_FIELDS)
+    # Keep downstream conversion independent from provider column omissions.
+    for column in TUSHARE_DAILY_FIELDS:
         if column not in frame.columns:
             frame[column] = ""
-    return frame[TUSHARE_ADJ_FACTOR_FIELDS]
+    return frame[TUSHARE_DAILY_FIELDS]
 
 
 def fetch_with_retries(
@@ -267,22 +278,34 @@ def fetch_with_retries(
         except Exception as exc:
             last_error = exc
             if attempt < max_retries:
+                # Retry transient provider or network failures before marking the stock failed.
                 time.sleep(retry_interval)
     raise last_error
 
 
-def convert_tushare_adj_factor(raw):
-    """Convert raw Tushare adj_factor rows into the local adj_factor schema."""
+def convert_tushare_daily(raw, name_by_code: dict[str, str]):
+    """Convert raw Tushare daily rows into the local unadjusted daily schema."""
     pd = import_pandas()
     update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     output = pd.DataFrame()
 
     output["code"] = raw["ts_code"].fillna("").astype(str).str.split(".").str[0].str.zfill(6)
+    output["name"] = output["code"].map(name_by_code).fillna("")
     output["trade_date"] = raw["trade_date"].map(format_tushare_date)
-    output["adjust_factor"] = raw["adj_factor"]
+    output["open"] = raw["open"]
+    output["high"] = raw["high"]
+    output["low"] = raw["low"]
+    output["close"] = raw["close"]
+    output["pre_close"] = raw["pre_close"]
+    output["change"] = raw["change"]
+    output["pct_chg"] = raw["pct_chg"]
+    # Convert provider units into local units: shares and yuan.
+    output["volume"] = pd.to_numeric(raw["vol"], errors="coerce") * TUSHARE_VOLUME_TO_LOCAL
+    output["amount"] = pd.to_numeric(raw["amount"], errors="coerce") * TUSHARE_AMOUNT_TO_LOCAL
+    output["adjust_type"] = "none"
     output["update_time"] = update_time
 
-    output = output[ADJ_FACTOR_COLUMNS]
+    output = output[DAILY_PRICE_COLUMNS]
     output = output[output["code"].str.fullmatch(r"\d{6}", na=False)]
     output = output[output["trade_date"].str.fullmatch(r"\d{4}-\d{2}-\d{2}", na=False)]
     output = output.sort_values(["code", "trade_date"], kind="stable")
@@ -307,13 +330,14 @@ def write_csv(
     path: Path,
     backup_root: Path = DEFAULT_BACKUP_ROOT,
     backup_timestamp: str | None = None,
-    create_backup: bool = True,
+    create_backup: bool = False,
 ) -> Path | None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = path.with_suffix(path.suffix + ".tmp")
     frame.to_csv(temp_path, index=False, encoding="utf-8", lineterminator="\n")
     backup_path = None
 
+    # Backup is optional; temp replacement protects against partial writes.
     if create_backup and path.exists():
         backup_timestamp = backup_timestamp or build_backup_timestamp()
         backup_path = build_backup_path(path, backup_root, backup_timestamp)
@@ -373,7 +397,7 @@ def append_etl_log(
             writer.writeheader()
         writer.writerow(
             {
-                "job_name": "fetch_adj_factor",
+                "job_name": "fetch_daily",
                 "source": "tushare",
                 "start_time": start_time,
                 "end_time": end_time,
@@ -384,7 +408,7 @@ def append_etl_log(
         )
 
 
-def run_adj_factor_etl(
+def run_daily_etl(
     token: str,
     codes: Iterable[str] | None = None,
     codes_file: Path | None = None,
@@ -400,7 +424,7 @@ def run_adj_factor_etl(
     write_log: bool = True,
     log_path: Path = DEFAULT_LOG,
     backup_root: Path = DEFAULT_BACKUP_ROOT,
-    create_backup: bool = True,
+    create_backup: bool = False,
     resume: bool = False,
     request_interval: float = 0.13,
     progress_every: int = 0,
@@ -431,7 +455,8 @@ def run_adj_factor_etl(
         selected_codes = load_requested_codes(codes, codes_file)
         stocks = select_stock_rows(stock_basic, selected_codes, all_stocks, limit_stocks)
         stock_count = len(stocks)
-        progress = ProgressReporter(stock_count, every=progress_every, label="Fetch adj_factor")
+        name_by_code = dict(zip(stock_basic["code"], stock_basic["name"]))
+        progress = ProgressReporter(stock_count, every=progress_every, label="Fetch daily")
 
         for index, stock in enumerate(stocks.to_dict("records"), start=1):
             code = stock["code"]
@@ -439,6 +464,7 @@ def run_adj_factor_etl(
             ts_code = ""
             try:
                 if resume and output_path.exists() and output_path.stat().st_size > 0:
+                    # Full-history fetch can skip completed files when resume is enabled.
                     skipped_count += 1
                     progress.maybe_print(
                         index,
@@ -458,6 +484,7 @@ def run_adj_factor_etl(
                     retry_interval=retry_interval,
                 )
             except Exception as exc:
+                # Keep long all-stock jobs running unless stop-on-error is requested.
                 failures.append({"code": code, "ts_code": ts_code, "error": str(exc)})
                 if stop_on_error:
                     raise
@@ -469,7 +496,7 @@ def run_adj_factor_etl(
                 )
                 continue
 
-            normalized = convert_tushare_adj_factor(raw)
+            normalized = convert_tushare_daily(raw, name_by_code)
             row_count += len(normalized)
 
             if not dry_run:
@@ -546,7 +573,7 @@ def main() -> int:
         return 2
 
     try:
-        result = run_adj_factor_etl(
+        result = run_daily_etl(
             token=args.token,
             codes=args.codes,
             codes_file=args.codes_file,
@@ -561,7 +588,7 @@ def main() -> int:
             dry_run=args.dry_run,
             write_log=not args.no_log,
             backup_root=args.backup_root,
-            create_backup=not args.no_backup,
+            create_backup=args.create_backup,
             resume=args.resume,
             request_interval=args.request_interval,
             progress_every=args.progress_every,
@@ -594,7 +621,7 @@ def main() -> int:
             return 1
         return 0
     except Exception as exc:
-        print(f"fetch_adj_factor failed: {exc}", file=sys.stderr)
+        print(f"fetch_daily failed: {exc}", file=sys.stderr)
         return 1
 
 

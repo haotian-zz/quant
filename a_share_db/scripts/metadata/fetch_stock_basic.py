@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Iterable
 
 
-PACKAGE_ROOT = Path(__file__).resolve().parents[2]
+PACKAGE_ROOT = Path(__file__).resolve().parents[3]
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
@@ -35,7 +35,7 @@ from a_share_db.constant.paths import (
 )
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT = STOCK_BASIC_PATH
 DEFAULT_RAW_OUTPUT = RAW_TUSHARE_STOCK_BASIC_PATH
 DEFAULT_LOG = ETL_LOG_PATH
@@ -96,10 +96,13 @@ def parse_args() -> argparse.Namespace:
         help=f"Backup directory for existing CSV files. Default: {DEFAULT_BACKUP_ROOT}",
     )
     parser.add_argument(
-        "--no-backup",
+        "--backup",
+        dest="create_backup",
         action="store_true",
-        help="Do not move existing output files to backups before replacing them.",
+        help="Move existing output files to backups before replacing them. Default: off.",
     )
+    parser.add_argument("--no-backup", dest="create_backup", action="store_false", help=argparse.SUPPRESS)
+    parser.set_defaults(create_backup=False)
     return parser.parse_args()
 
 
@@ -125,6 +128,7 @@ def fetch_from_tushare(token: str, statuses: Iterable[str]):
     ts.set_token(token)
     pro = ts.pro_api()
 
+    # Fetch each status separately because Tushare stock_basic takes one status.
     frames = []
     errors = []
     fields = ",".join(TUSHARE_STOCK_BASIC_FIELDS)
@@ -149,6 +153,7 @@ def fetch_from_tushare(token: str, statuses: Iterable[str]):
         raise RuntimeError("No stock_basic rows fetched. " + "; ".join(errors))
 
     raw = pd.concat(frames, ignore_index=True)
+    # Add missing columns defensively so schema conversion stays stable.
     for column in TUSHARE_STOCK_BASIC_FIELDS:
         if column not in raw.columns:
             raw[column] = ""
@@ -166,6 +171,7 @@ def convert_tushare_stock_basic(raw):
     raw_code = raw["symbol"].fillna("").astype(str).str.strip()
     missing_code = raw_code.eq("") | raw_code.str.lower().isin({"nan", "none", "nat"})
     output["code"] = raw_code.str.zfill(6)
+    # ts_code is only used as a fallback; it is not stored in the curated table.
     output.loc[missing_code, "code"] = (
         raw.loc[missing_code, "ts_code"].fillna("").astype(str).str.split(".").str[0]
     )
@@ -212,13 +218,14 @@ def write_csv(
     path: Path,
     backup_root: Path = DEFAULT_BACKUP_ROOT,
     backup_timestamp: str | None = None,
-    create_backup: bool = True,
+    create_backup: bool = False,
 ) -> Path | None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = path.with_suffix(path.suffix + ".tmp")
     frame.to_csv(temp_path, index=False, encoding="utf-8", lineterminator="\n")
     backup_path = None
 
+    # Backups are opt-in. By default the temp file replaces the target directly.
     if create_backup and path.exists():
         backup_timestamp = backup_timestamp or build_backup_timestamp()
         backup_path = build_backup_path(path, backup_root, backup_timestamp)
@@ -226,6 +233,7 @@ def write_csv(
         path.replace(backup_path)
 
     try:
+        # Replace only after the full temp file is written.
         temp_path.replace(path)
     except Exception:
         if backup_path and backup_path.exists() and not path.exists():
@@ -244,6 +252,7 @@ def build_backup_path(path: Path, backup_root: Path, backup_timestamp: str) -> P
     try:
         relative_path = path.resolve().relative_to(PROJECT_ROOT.resolve())
     except ValueError:
+        # External paths are still backed up under backup_root without escaping it.
         if path.is_absolute():
             relative_path = Path("external").joinpath(*path.parts[1:])
         else:
@@ -300,7 +309,7 @@ def run_stock_basic_etl(
     limit: int | None = None,
     dry_run: bool = False,
     backup_root: Path = DEFAULT_BACKUP_ROOT,
-    create_backup: bool = True,
+    create_backup: bool = False,
 ) -> dict:
     """Fetch stock metadata and write local CSV outputs.
 
@@ -321,6 +330,7 @@ def run_stock_basic_etl(
         normalized = convert_tushare_stock_basic(raw)
         total_row_count = len(normalized)
 
+        # Limit is for smoke tests, after conversion has proved the full schema works.
         if limit is not None:
             if limit < 0:
                 raise ValueError("limit must be greater than or equal to 0.")
@@ -400,7 +410,7 @@ def main() -> int:
             limit=args.limit,
             dry_run=args.dry_run,
             backup_root=args.backup_root,
-            create_backup=not args.no_backup,
+            create_backup=args.create_backup,
         )
         if args.dry_run:
             print(

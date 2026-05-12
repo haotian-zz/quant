@@ -4,7 +4,7 @@
 
 Local data is written under `a_share_db/data/`. This directory is ignored by git because it can become large and should be rebuilt or synced separately.
 
-Long-running commands share `a_share_db.progress.ProgressReporter` and expose `--progress-every` for progress and ETA output.
+Long-running commands share `a_share_db.utils.progress.ProgressReporter` and expose `--progress-every` for progress and ETA output.
 
 ## Setup
 
@@ -51,14 +51,14 @@ Raw provider output is off by default. Add `--with-raw` only when you need to ke
 5. Build qfq/hfq daily prices locally.
 
 ```bash
-python3 a_share_db/scripts/fetch_stock_basic.py --statuses L D P G
+python3 a_share_db/scripts/metadata/fetch_stock_basic.py --statuses L D P G
 
-python3 a_share_db/scripts/fetch_trade_calendar.py \
+python3 a_share_db/scripts/metadata/fetch_trade_calendar.py \
   --exchanges SSE SZSE \
   --start-date 19901219 \
   --end-date 20260510
 
-python3 a_share_db/scripts/fetch_daily.py \
+python3 a_share_db/scripts/market/fetch_daily.py \
   --all-stocks \
   --start-date 19900101 \
   --end-date 20260510 \
@@ -68,7 +68,7 @@ python3 a_share_db/scripts/fetch_daily.py \
   --max-retries 3 \
   --retry-interval 5
 
-python3 a_share_db/scripts/fetch_adj_factor.py \
+python3 a_share_db/scripts/market/fetch_adj_factor.py \
   --all-stocks \
   --start-date 19900101 \
   --end-date 20260510 \
@@ -78,9 +78,10 @@ python3 a_share_db/scripts/fetch_adj_factor.py \
   --max-retries 3 \
   --retry-interval 5
 
-python3 a_share_db/scripts/build_adjusted_daily.py \
+python3 a_share_db/scripts/market/build_adjusted_daily.py \
   --all-stocks \
-  --resume
+  --resume \
+  --progress-every 50
 ```
 
 If a long job fails midway, rerun the same command with `--resume`. Existing non-empty per-stock files will be skipped.
@@ -88,7 +89,7 @@ If a long job fails midway, rerun the same command with `--resume`. Existing non
 After the initial build, use the incremental update command instead of fetching full history again:
 
 ```bash
-python3 a_share_db/scripts/update_daily.py \
+python3 a_share_db/scripts/market/update_daily.py \
   --all-stocks \
   --end-date 20260510 \
   --request-interval 0.13 \
@@ -97,9 +98,43 @@ python3 a_share_db/scripts/update_daily.py \
   --retry-interval 5
 ```
 
+## Common Commands
+
+These wrappers choose the project defaults for routine workflows. You can run them without remembering the full parameter list.
+
+Daily database update. This updates `daily/none`, updates `adj_factor`, and incrementally merges `daily/hfq`. It does not rebuild `qfq`.
+
+```bash
+python3 a_share_db/scripts/workflows/update_daily_data.py
+```
+
+Dry-run daily update:
+
+```bash
+python3 a_share_db/scripts/workflows/update_daily_data.py --dry-run
+```
+
+Rebuild qfq/hfq from local `none + adj_factor` data. This is a maintenance command, not something that has to run every day.
+
+```bash
+python3 a_share_db/scripts/workflows/rebuild_adjusted_daily_data.py
+```
+
+Rebuild only qfq:
+
+```bash
+python3 a_share_db/scripts/workflows/rebuild_adjusted_daily_data.py --adjust-types qfq
+```
+
+Refresh stock master data and trade calendar:
+
+```bash
+python3 a_share_db/scripts/metadata/refresh_metadata.py
+```
+
 ## Scripts
 
-### `scripts/fetch_stock_basic.py`
+### `scripts/metadata/fetch_stock_basic.py`
 
 Fetches Tushare `stock_basic` and writes the local stock master table:
 
@@ -112,7 +147,7 @@ Use this table as the project-level stock universe. It intentionally stores loca
 Smoke test without writing files:
 
 ```bash
-python3 a_share_db/scripts/fetch_stock_basic.py \
+python3 a_share_db/scripts/metadata/fetch_stock_basic.py \
   --statuses L \
   --limit 20 \
   --dry-run
@@ -121,14 +156,14 @@ python3 a_share_db/scripts/fetch_stock_basic.py \
 Refresh all statuses:
 
 ```bash
-python3 a_share_db/scripts/fetch_stock_basic.py \
+python3 a_share_db/scripts/metadata/fetch_stock_basic.py \
   --statuses L D P G
 ```
 
 Also keep raw Tushare rows:
 
 ```bash
-python3 a_share_db/scripts/fetch_stock_basic.py \
+python3 a_share_db/scripts/metadata/fetch_stock_basic.py \
   --statuses L D P G \
   --with-raw
 ```
@@ -137,7 +172,7 @@ Import example:
 
 ```python
 import os
-from a_share_db.scripts.fetch_stock_basic import run_stock_basic_etl
+from a_share_db.scripts.metadata.fetch_stock_basic import run_stock_basic_etl
 
 result = run_stock_basic_etl(
     token=os.environ["TUSHARE_TOKEN"],
@@ -148,7 +183,7 @@ result = run_stock_basic_etl(
 print(result["row_count"])
 ```
 
-### `scripts/fetch_trade_calendar.py`
+### `scripts/metadata/fetch_trade_calendar.py`
 
 Fetches Tushare `trade_cal` and writes:
 
@@ -161,7 +196,7 @@ Default exchanges are `SSE` and `SZSE`. Tushare does not expose `BSE` in this ca
 Smoke test:
 
 ```bash
-python3 a_share_db/scripts/fetch_trade_calendar.py \
+python3 a_share_db/scripts/metadata/fetch_trade_calendar.py \
   --exchanges SSE SZSE \
   --start-date 20260101 \
   --end-date 20260131 \
@@ -171,7 +206,7 @@ python3 a_share_db/scripts/fetch_trade_calendar.py \
 Build the local calendar:
 
 ```bash
-python3 a_share_db/scripts/fetch_trade_calendar.py \
+python3 a_share_db/scripts/metadata/fetch_trade_calendar.py \
   --exchanges SSE SZSE \
   --start-date 19901219 \
   --end-date 20260510
@@ -181,7 +216,7 @@ Import example:
 
 ```python
 import os
-from a_share_db.scripts.fetch_trade_calendar import run_trade_calendar_etl
+from a_share_db.scripts.metadata.fetch_trade_calendar import run_trade_calendar_etl
 
 result = run_trade_calendar_etl(
     token=os.environ["TUSHARE_TOKEN"],
@@ -193,7 +228,7 @@ result = run_trade_calendar_etl(
 print(result["row_count"])
 ```
 
-### `scripts/fetch_daily.py`
+### `scripts/market/fetch_daily.py`
 
 Fetches Tushare `daily` and writes unadjusted daily bars by stock:
 
@@ -211,7 +246,7 @@ amount 千元 -> amount 元
 Single-stock smoke test:
 
 ```bash
-python3 a_share_db/scripts/fetch_daily.py \
+python3 a_share_db/scripts/market/fetch_daily.py \
   --codes 600519 \
   --start-date 20260101 \
   --end-date 20260131 \
@@ -221,7 +256,7 @@ python3 a_share_db/scripts/fetch_daily.py \
 Fetch a few stocks for testing:
 
 ```bash
-python3 a_share_db/scripts/fetch_daily.py \
+python3 a_share_db/scripts/market/fetch_daily.py \
   --all-stocks \
   --limit-stocks 5 \
   --start-date 20260101 \
@@ -232,7 +267,7 @@ python3 a_share_db/scripts/fetch_daily.py \
 Fetch full history with resume and rate limiting:
 
 ```bash
-python3 a_share_db/scripts/fetch_daily.py \
+python3 a_share_db/scripts/market/fetch_daily.py \
   --all-stocks \
   --start-date 19900101 \
   --end-date 20260510 \
@@ -247,7 +282,7 @@ Import example:
 
 ```python
 import os
-from a_share_db.scripts.fetch_daily import run_daily_etl
+from a_share_db.scripts.market.fetch_daily import run_daily_etl
 
 result = run_daily_etl(
     token=os.environ["TUSHARE_TOKEN"],
@@ -259,7 +294,7 @@ result = run_daily_etl(
 print(result["row_count"])
 ```
 
-### `scripts/fetch_adj_factor.py`
+### `scripts/market/fetch_adj_factor.py`
 
 Fetches Tushare `adj_factor` and writes local adjustment factors by stock:
 
@@ -272,7 +307,7 @@ Adjustment factors are kept in a separate table so qfq/hfq data can be rebuilt l
 Single-stock smoke test:
 
 ```bash
-python3 a_share_db/scripts/fetch_adj_factor.py \
+python3 a_share_db/scripts/market/fetch_adj_factor.py \
   --codes 600519 \
   --start-date 20260101 \
   --end-date 20260131 \
@@ -282,7 +317,7 @@ python3 a_share_db/scripts/fetch_adj_factor.py \
 Fetch full history:
 
 ```bash
-python3 a_share_db/scripts/fetch_adj_factor.py \
+python3 a_share_db/scripts/market/fetch_adj_factor.py \
   --all-stocks \
   --start-date 19900101 \
   --end-date 20260510 \
@@ -297,7 +332,7 @@ Import example:
 
 ```python
 import os
-from a_share_db.scripts.fetch_adj_factor import run_adj_factor_etl
+from a_share_db.scripts.market.fetch_adj_factor import run_adj_factor_etl
 
 result = run_adj_factor_etl(
     token=os.environ["TUSHARE_TOKEN"],
@@ -309,7 +344,7 @@ result = run_adj_factor_etl(
 print(result["row_count"])
 ```
 
-### `scripts/build_adjusted_daily.py`
+### `scripts/market/build_adjusted_daily.py`
 
 Builds qfq and hfq daily bars from local unadjusted daily data plus local adjustment factors:
 
@@ -323,14 +358,14 @@ No provider API is called by this script.
 Build one stock:
 
 ```bash
-python3 a_share_db/scripts/build_adjusted_daily.py \
+python3 a_share_db/scripts/market/build_adjusted_daily.py \
   --codes 600519
 ```
 
 Build only qfq:
 
 ```bash
-python3 a_share_db/scripts/build_adjusted_daily.py \
+python3 a_share_db/scripts/market/build_adjusted_daily.py \
   --codes 600519 \
   --adjust-types qfq
 ```
@@ -338,7 +373,7 @@ python3 a_share_db/scripts/build_adjusted_daily.py \
 Build all stocks with resume:
 
 ```bash
-python3 a_share_db/scripts/build_adjusted_daily.py \
+python3 a_share_db/scripts/market/build_adjusted_daily.py \
   --all-stocks \
   --resume \
   --progress-every 50
@@ -349,13 +384,13 @@ Progress output prints processed stocks, percent, elapsed time, ETA, rows, skipp
 Import example:
 
 ```python
-from a_share_db.scripts.build_adjusted_daily import run_build_adjusted_daily
+from a_share_db.scripts.market.build_adjusted_daily import run_build_adjusted_daily
 
 result = run_build_adjusted_daily(codes=["600519"], adjust_types=["qfq"], dry_run=True)
 print(result["row_count"])
 ```
 
-### `scripts/update_daily.py`
+### `scripts/market/update_daily.py`
 
 Incrementally updates existing daily files. For each stock, it reads the max local `trade_date` from:
 
@@ -365,12 +400,14 @@ a_share_db/data/market_data/daily/none/{code}.csv
 
 Then it fetches from the next calendar day through `--end-date`, merges by `code + trade_date`, sorts the file, and rewrites the same CSV path atomically. This keeps file names stable and avoids downloading full history every time.
 
-By default it also updates `adj_factor` and rebuilds qfq/hfq for stocks that changed. qfq/hfq are rebuilt rather than appended because qfq prices can change when the latest adjustment factor changes.
+By default it also updates `adj_factor` and incrementally merges `hfq` rows for missing trade dates. It does not rebuild `qfq` by default, because qfq prices depend on the latest adjustment factor and can require historical rows to be recalculated.
+
+Use `build_adjusted_daily.py` to manually or periodically rebuild qfq/hfq from local `none + adj_factor` data.
 
 Smoke test a few stocks without writing files:
 
 ```bash
-python3 a_share_db/scripts/update_daily.py \
+python3 a_share_db/scripts/market/update_daily.py \
   --all-stocks \
   --limit-stocks 5 \
   --end-date 20260510 \
@@ -380,7 +417,7 @@ python3 a_share_db/scripts/update_daily.py \
 Update all existing local daily files:
 
 ```bash
-python3 a_share_db/scripts/update_daily.py \
+python3 a_share_db/scripts/market/update_daily.py \
   --all-stocks \
   --end-date 20260510 \
   --request-interval 0.13 \
@@ -392,27 +429,36 @@ python3 a_share_db/scripts/update_daily.py \
 Initialize missing stocks during an update:
 
 ```bash
-python3 a_share_db/scripts/update_daily.py \
+python3 a_share_db/scripts/market/update_daily.py \
   --all-stocks \
   --init-missing \
   --start-date 19900101 \
   --end-date 20260510
 ```
 
-Only update unadjusted daily files and skip adjusted outputs:
+Only update unadjusted daily files and adjustment factors, and skip hfq/qfq outputs:
 
 ```bash
-python3 a_share_db/scripts/update_daily.py \
+python3 a_share_db/scripts/market/update_daily.py \
   --all-stocks \
-  --no-adj-factor \
   --no-adjusted
+```
+
+Explicitly rebuild qfq for changed stocks during an update. This is slower and normally should be reserved for manual maintenance windows:
+
+```bash
+python3 a_share_db/scripts/market/update_daily.py \
+  --all-stocks \
+  --end-date 20260510 \
+  --adjust-types hfq qfq \
+  --progress-every 50
 ```
 
 Import example:
 
 ```python
 import os
-from a_share_db.scripts.update_daily import run_update_daily
+from a_share_db.scripts.market.update_daily import run_update_daily
 
 result = run_update_daily(
     token=os.environ["TUSHARE_TOKEN"],
@@ -423,12 +469,12 @@ result = run_update_daily(
 print(result["daily_new_rows"])
 ```
 
-### `scripts/provider_codes.py`
+### `a_share_db/utils/provider_codes.py`
 
 Converts local stock fields into provider-specific symbols at runtime. Use this module instead of storing provider codes in formal tables.
 
 ```python
-from a_share_db.scripts.provider_codes import (
+from a_share_db.utils.provider_codes import (
     build_eastmoney_secid,
     build_sina_symbol,
     build_tencent_symbol,
@@ -454,8 +500,8 @@ print(build_eastmoney_secid("600519", "SSE"))   # 1.600519
 
 `--stop-on-error` is useful for debugging. Without it, per-stock jobs record failures and continue; rerun with `--resume` after fixing the issue.
 
-Existing output files are backed up to `a_share_db/data/backups/` before replacement unless `--no-backup` is passed.
+Existing output files are not backed up by default. Pass `--backup` to move previous files to `a_share_db/data/backups/` before replacement.
 
-Development convention: any new command that loops over many stocks should reuse `a_share_db.progress.ProgressReporter` and expose a `--progress-every` option.
+Development convention: any new command that loops over many stocks should reuse `a_share_db.utils.progress.ProgressReporter` and expose a `--progress-every` option.
 
-Reusable logic should live in package modules instead of being copied across scripts. Keep `scripts/*.py` focused on CLI parsing and orchestration; shared behavior such as progress reporting, provider code conversion, date/file helpers, merge logic, and constants should be extracted into importable modules.
+Reusable logic should live in package modules instead of being copied across scripts. Keep `scripts/` command files focused on CLI parsing and orchestration; shared behavior such as progress reporting, provider code conversion, date/file helpers, merge logic, and constants should be extracted into importable modules.

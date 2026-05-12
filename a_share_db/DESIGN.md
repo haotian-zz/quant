@@ -48,19 +48,26 @@ a_share_db/
 ├── constant/
 │   ├── stock_basic.py
 │   ├── daily.py
-│   └── trade_calendar.py
+│   ├── trade_calendar.py
+│   └── commands.py
 │
-├── progress.py
+├── utils/
+│   ├── progress.py
+│   └── provider_codes.py
 │
 └── scripts/
-    ├── provider_codes.py
-    ├── fetch_stock_basic.py
-    ├── fetch_trade_calendar.py
-    ├── fetch_adj_factor.py
-    ├── fetch_daily.py
-    ├── build_adjusted_daily.py
-    ├── update_daily.py
-    └── update_all.py
+    ├── metadata/
+    │   ├── fetch_stock_basic.py
+    │   ├── fetch_trade_calendar.py
+    │   └── refresh_metadata.py
+    ├── market/
+    │   ├── fetch_adj_factor.py
+    │   ├── fetch_daily.py
+    │   ├── build_adjusted_daily.py
+    │   └── update_daily.py
+    ├── workflows/
+    │   ├── update_daily_data.py
+    │   └── rebuild_adjusted_daily_data.py
 ```
 
 ---
@@ -73,7 +80,7 @@ a_share_db/
 data/metadata/stock_basic.csv、data/metadata/trade_calendar.csv、data/market_data/daily/* 都是本地维护的正式表。
 正式表字段必须使用本地领域语义，不保存第三方接口字段名、第三方代码格式或数据源标记。
 第三方原始字段、原始代码、接口来源只允许出现在 raw_* 文件或 ETL 日志中。
-第三方接口调用需要的 symbol、secid 等标识由 scripts/provider_codes.py 按需生成。
+第三方接口调用需要的 symbol、secid 等标识由 a_share_db/utils/provider_codes.py 按需生成。
 ```
 
 ### 3.1 股票基础信息表：`data/metadata/stock_basic.csv`
@@ -126,7 +133,7 @@ data/metadata/raw_tushare_stock_basic.csv
 ts_code,symbol,name,area,industry,fullname,enname,cnspell,market,exchange,curr_type,list_status,list_date,delist_date,is_hs,act_name,act_ent_type
 ```
 
-转换关系由 `scripts/fetch_stock_basic.py` 中的 `convert_tushare_stock_basic` 维护：
+转换关系由 `scripts/metadata/fetch_stock_basic.py` 中的 `convert_tushare_stock_basic` 维护：
 
 | 主表字段                 | Tushare 原始字段          |
 | ---------------------- | --------------------- |
@@ -153,17 +160,17 @@ ts_code,symbol,name,area,industry,fullname,enname,cnspell,market,exchange,curr_t
 
 ```bash
 # 只验证 Tushare token、接口连通性和字段转换，不写任何 CSV 或日志。
-python3 a_share_db/scripts/fetch_stock_basic.py --statuses L --limit 20 --dry-run
+python3 a_share_db/scripts/metadata/fetch_stock_basic.py --statuses L --limit 20 --dry-run
 
 # 写一份 20 行样本到临时路径，不覆盖正式主表。
-python3 a_share_db/scripts/fetch_stock_basic.py \
+python3 a_share_db/scripts/metadata/fetch_stock_basic.py \
   --statuses L \
   --limit 20 \
   --output /tmp/stock_basic_sample.csv \
   --no-log
 
 # 如需同时保留 Tushare 原始返回，显式增加 --with-raw。
-python3 a_share_db/scripts/fetch_stock_basic.py \
+python3 a_share_db/scripts/metadata/fetch_stock_basic.py \
   --statuses L \
   --limit 20 \
   --output /tmp/stock_basic_sample.csv \
@@ -174,16 +181,14 @@ python3 a_share_db/scripts/fetch_stock_basic.py \
 
 `stock_basic` 只拉股票基础资料，不拉日线历史行情。`--limit` 只限制本地写出的样本行数；Tushare `stock_basic` 接口本身仍会返回对应上市状态的基础资料集合。
 
-正式刷新时，如果目标 CSV 已存在，脚本默认先备份旧文件，再替换为新文件：
+正式刷新时，如果目标 CSV 已存在，脚本默认不备份旧文件，直接用临时文件原子替换：
 
 ```text
 1. 写完整的新临时文件：{target}.tmp
-2. 将旧正式文件移动到 data/backups/{timestamp}/...
-3. 将新临时文件替换为正式文件
-4. 如果替换失败且旧文件已备份，自动恢复旧正式文件
+2. 将新临时文件替换为正式文件
 ```
 
-如需关闭备份，可加 `--no-backup`。备份目录可用 `--backup-root` 指定。
+如需备份旧文件，可显式加 `--backup`。备份目录可用 `--backup-root` 指定。
 
 ---
 
@@ -234,7 +239,7 @@ data/metadata/raw_tushare_trade_calendar.csv
 exchange,cal_date,is_open,pretrade_date
 ```
 
-转换关系由 `scripts/fetch_trade_calendar.py` 中的 `convert_tushare_trade_calendar` 维护：
+转换关系由 `scripts/metadata/fetch_trade_calendar.py` 中的 `convert_tushare_trade_calendar` 维护：
 
 | 正式表字段              | Tushare 原始字段          |
 |----------------------|-----------------------|
@@ -247,20 +252,20 @@ exchange,cal_date,is_open,pretrade_date
 
 ```bash
 # 只验证 Tushare token、接口连通性和字段转换，不写任何 CSV 或日志。
-python3 a_share_db/scripts/fetch_trade_calendar.py \
+python3 a_share_db/scripts/metadata/fetch_trade_calendar.py \
   --start-date 20260101 \
   --end-date 20260131 \
   --dry-run
 
 # 写一份 1 个月样本到临时路径，不覆盖正式交易日历。
-python3 a_share_db/scripts/fetch_trade_calendar.py \
+python3 a_share_db/scripts/metadata/fetch_trade_calendar.py \
   --start-date 20260101 \
   --end-date 20260131 \
   --output /tmp/trade_calendar_sample.csv \
   --no-log
 
 # 如需同时保留 Tushare 原始返回，显式增加 --with-raw。
-python3 a_share_db/scripts/fetch_trade_calendar.py \
+python3 a_share_db/scripts/metadata/fetch_trade_calendar.py \
   --start-date 20260101 \
   --end-date 20260131 \
   --output /tmp/trade_calendar_sample.csv \
@@ -272,7 +277,7 @@ python3 a_share_db/scripts/fetch_trade_calendar.py \
 默认交易所为 A 股相关的 `SSE SZSE`，因此正式构建时可以只指定年份范围：
 
 ```bash
-python3 a_share_db/scripts/fetch_trade_calendar.py \
+python3 a_share_db/scripts/metadata/fetch_trade_calendar.py \
   --start-date 19900101 \
   --end-date 20271231
 ```
@@ -280,7 +285,7 @@ python3 a_share_db/scripts/fetch_trade_calendar.py \
 如果要一次拉取 Tushare 文档列出的全部交易所日历：
 
 ```bash
-python3 a_share_db/scripts/fetch_trade_calendar.py \
+python3 a_share_db/scripts/metadata/fetch_trade_calendar.py \
   --exchanges ALL \
   --start-date 19900101 \
   --end-date 20271231
@@ -353,7 +358,7 @@ code + trade_date + adjust_type
 data/raw/daily/{provider}/{adjust_type}/{code}.csv
 ```
 
-正式日线表由转换组件写入，转换时可通过 `scripts/provider_codes.py` 从 `code + exchange` 生成接口调用需要的 provider code，但 provider code 不落入正式日线表。
+正式日线表由转换组件写入，转换时可通过 `a_share_db/utils/provider_codes.py` 从 `code + exchange` 生成接口调用需要的 provider code，但 provider code 不落入正式日线表。
 
 Tushare `daily` 字段转换关系：
 
@@ -405,21 +410,21 @@ pct_chg = change / pre_close * 100
 
 ```bash
 # 未复权日线，先测单只股票和短时间窗口。
-python3 a_share_db/scripts/fetch_daily.py \
+python3 a_share_db/scripts/market/fetch_daily.py \
   --codes 600519 \
   --start-date 20260101 \
   --end-date 20260131 \
   --dry-run
 
 # 复权因子，先测同一只股票和同一时间窗口。
-python3 a_share_db/scripts/fetch_adj_factor.py \
+python3 a_share_db/scripts/market/fetch_adj_factor.py \
   --codes 600519 \
   --start-date 20260101 \
   --end-date 20260131 \
   --dry-run
 
 # 已经落地 none 和 adj_factor 后，本地生成 qfq/hfq。
-python3 a_share_db/scripts/build_adjusted_daily.py \
+python3 a_share_db/scripts/market/build_adjusted_daily.py \
   --codes 600519 \
   --dry-run
 ```
@@ -428,7 +433,7 @@ python3 a_share_db/scripts/build_adjusted_daily.py \
 
 ```bash
 # 拉未复权日线。--resume 会跳过已存在且非空的单股票文件。
-python3 a_share_db/scripts/fetch_daily.py \
+python3 a_share_db/scripts/market/fetch_daily.py \
   --all-stocks \
   --start-date 19900101 \
   --end-date 20260510 \
@@ -439,7 +444,7 @@ python3 a_share_db/scripts/fetch_daily.py \
   --retry-interval 5
 
 # 拉复权因子。
-python3 a_share_db/scripts/fetch_adj_factor.py \
+python3 a_share_db/scripts/market/fetch_adj_factor.py \
   --all-stocks \
   --start-date 19900101 \
   --end-date 20260510 \
@@ -450,7 +455,7 @@ python3 a_share_db/scripts/fetch_adj_factor.py \
   --retry-interval 5
 
 # 本地生成 qfq/hfq。--resume 会跳过已存在且非空的 qfq/hfq 文件。
-python3 a_share_db/scripts/build_adjusted_daily.py \
+python3 a_share_db/scripts/market/build_adjusted_daily.py \
   --all-stocks \
   --resume \
   --progress-every 50
@@ -572,7 +577,7 @@ scripts/ 下的 ETL 脚本只能引用这些常量，不在脚本内部重复定
 | `constant/daily.py`         | 日线行情字段、复权因子字段、复权类型       |
 | `constant/trade_calendar.py` | 交易日历字段、Tushare 字段、默认交易所列表 |
 
-不同数据源使用不同代码格式。主表只保存本地标准字段 `code` 和 `exchange`，第三方代码格式由 `scripts/provider_codes.py` 按需转换。
+不同数据源使用不同代码格式。主表只保存本地标准字段 `code` 和 `exchange`，第三方代码格式由 `a_share_db/utils/provider_codes.py` 按需转换。
 
 | Field    | 示例         | 用途        |
 | -------- | ---------- | --------- |
@@ -606,20 +611,35 @@ scripts/ 下的 ETL 脚本只能引用这些常量，不在脚本内部重复定
 4. 对每只股票读取 data/market_data/daily/none/{code}.csv 的最大 trade_date
 5. 从 max(trade_date)+1 到 end_date 抓取 Tushare daily
 6. 读取旧 none 文件，与新增数据按 code + trade_date 合并去重
-7. 用临时文件原子替换原 none 文件，替换前按配置备份旧文件
+7. 用临时文件原子替换原 none 文件；只有显式传入 `--backup` 时才备份旧文件
 8. 同步更新 data/market_data/adj_factor/{code}.csv，复权因子起点按复权因子文件自己的最大 trade_date 计算
-9. 对本次有变化的股票重建 qfq/hfq 文件
-10. 写入 etl_log.csv
+9. 默认增量合并 data/market_data/daily/hfq/{code}.csv 的缺失交易日
+10. qfq 默认不在每日增量中重建；需要时手动或周期性通过 build_adjusted_daily.py 重建
+11. 写入 etl_log.csv
 ```
 
 增量更新以每个股票本地 CSV 的最大 `trade_date` 为准，不依赖全局“上次运行时间”。这样某只股票中途失败时，下一次重跑会只补这只股票缺失的区间。
 
-`qfq/hfq` 不直接追加。`qfq` 使用当前本地最大交易日的复权因子作为最新因子，新增交易日或复权因子变化后，历史前复权价格可能整体变化，因此增量更新后只对受影响股票重建对应 qfq/hfq 文件。
+`hfq` 可以按缺失交易日增量合并：
+
+```text
+hfq_price_t = none_price_t * adj_factor_t
+```
+
+历史 `hfq` 行不依赖最新交易日，因此每日更新可以只补新交易日。
+
+`qfq` 默认不在每日增量中物理重建：
+
+```text
+qfq_price_t = none_price_t * adj_factor_t / latest_adj_factor
+```
+
+`latest_adj_factor` 改变时，历史 `qfq` 行可能整体变化，因此 `qfq` 应通过 `build_adjusted_daily.py` 手动或周期性重建，或在分析时由 `none + adj_factor` 动态生成。
 
 示例：
 
 ```bash
-python3 a_share_db/scripts/update_daily.py \
+python3 a_share_db/scripts/market/update_daily.py \
   --all-stocks \
   --end-date 20260510 \
   --request-interval 0.13 \
@@ -630,9 +650,44 @@ python3 a_share_db/scripts/update_daily.py \
 
 ---
 
-## 6. 命令行进度显示约定
+## 6. 常用一键命令
 
-长时间运行的命令必须复用 `a_share_db.progress.ProgressReporter`，并提供 `--progress-every` 参数。
+常用命令以薄 wrapper 的方式实现，只封装默认参数，业务逻辑必须复用已有 ETL 函数。
+
+每天更新数据库：
+
+```bash
+python3 a_share_db/scripts/workflows/update_daily_data.py
+```
+
+默认行为：
+
+```text
+1. 更新 daily/none
+2. 更新 adj_factor
+3. 增量合并 daily/hfq
+4. 不重建 daily/qfq
+```
+
+手动或周期性重建 qfq/hfq：
+
+```bash
+python3 a_share_db/scripts/workflows/rebuild_adjusted_daily_data.py
+```
+
+刷新股票主表和交易日历：
+
+```bash
+python3 a_share_db/scripts/metadata/refresh_metadata.py
+```
+
+这些 wrapper 可以保留少量参数用于 dry-run、覆盖结束日期、调整进度输出等，但直接运行时必须采用项目默认配置。
+
+---
+
+## 7. 命令行进度显示约定
+
+长时间运行的命令必须复用 `a_share_db.utils.progress.ProgressReporter`，并提供 `--progress-every` 参数。
 
 进度输出至少包含：
 
@@ -650,9 +705,9 @@ current/total, percent, elapsed, eta, rows, skipped, failed
 
 ---
 
-## 7. 代码复用约定
+## 8. 代码复用约定
 
-任何可以跨脚本复用的逻辑都应该单独实现为包内模块，而不是复制到每个 `scripts/*.py` 里。
+任何可以跨脚本复用的逻辑都应该单独实现为包内模块，而不是复制到每个 `scripts/` 命令文件里。
 
 适合抽离的逻辑包括：
 
@@ -669,14 +724,15 @@ current/total, percent, elapsed, eta, rows, skipped, failed
 现有示例：
 
 ```text
-a_share_db/progress.py              # 长任务进度输出
-a_share_db/scripts/provider_codes.py # 第三方代码格式转换
+a_share_db/utils/progress.py        # 长任务进度输出
+a_share_db/utils/provider_codes.py  # 第三方代码格式转换
+a_share_db/constant/commands.py     # 一键命令默认参数
 a_share_db/constant/*.py            # 字段、路径、枚举等常量
 ```
 
 ---
 
-## 8. 第一阶段 MVP
+## 9. 第一阶段 MVP
 
 第一阶段只实现以下文件：
 

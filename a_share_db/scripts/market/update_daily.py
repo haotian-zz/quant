@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Incrementally update daily prices, adj factors, and adjusted daily files.
+"""Incrementally update daily prices, adj factors, and selected adjusted files.
 
 For each selected stock, this script reads the max local trade_date from
 data/market_data/daily/none/{code}.csv, fetches missing rows from the next day
@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Iterable
 
 
-PACKAGE_ROOT = Path(__file__).resolve().parents[2]
+PACKAGE_ROOT = Path(__file__).resolve().parents[3]
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
@@ -33,18 +33,17 @@ from a_share_db.constant.paths import (
     RAW_TUSHARE_DAILY_NONE_ROOT,
     STOCK_BASIC_PATH,
 )
-from a_share_db.progress import ProgressReporter
-from a_share_db.scripts.build_adjusted_daily import (
-    ADJUSTED_TYPES,
+from a_share_db.utils.progress import ProgressReporter
+from a_share_db.scripts.market.build_adjusted_daily import (
     build_adjusted_daily,
     write_csv as write_adjusted_csv,
 )
-from a_share_db.scripts.fetch_adj_factor import (
+from a_share_db.scripts.market.fetch_adj_factor import (
     convert_tushare_adj_factor,
     fetch_with_retries as fetch_adj_factor_with_retries,
     write_csv as write_adj_factor_csv,
 )
-from a_share_db.scripts.fetch_daily import (
+from a_share_db.scripts.market.fetch_daily import (
     convert_tushare_daily,
     fetch_with_retries as fetch_daily_with_retries,
     load_requested_codes,
@@ -52,10 +51,10 @@ from a_share_db.scripts.fetch_daily import (
     select_stock_rows,
     write_csv as write_daily_csv,
 )
-from a_share_db.scripts.provider_codes import build_tushare_ts_code
+from a_share_db.utils.provider_codes import build_tushare_ts_code
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_STOCK_BASIC = STOCK_BASIC_PATH
 DEFAULT_DAILY_ROOT = DAILY_NONE_ROOT
 DEFAULT_ADJ_FACTOR_ROOT = ADJ_FACTOR_ROOT
@@ -64,12 +63,14 @@ DEFAULT_RAW_DAILY_ROOT = RAW_TUSHARE_DAILY_NONE_ROOT
 DEFAULT_RAW_ADJ_FACTOR_ROOT = RAW_TUSHARE_ADJ_FACTOR_ROOT
 DEFAULT_LOG = ETL_LOG_PATH
 DEFAULT_BACKUP_ROOT = BACKUP_ROOT
+ADJUSTED_UPDATE_TYPES = ["hfq", "qfq"]
+DEFAULT_ADJUST_TYPES = ["hfq"]
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Incrementally update local daily none, adj_factor, and qfq/hfq CSV files."
+            "Incrementally update local daily none, adj_factor, and selected adjusted CSV files."
         )
     )
     parser.add_argument(
@@ -139,9 +140,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--adjust-types",
         nargs="+",
-        choices=ADJUSTED_TYPES,
-        default=ADJUSTED_TYPES,
-        help="Adjusted price types to rebuild after updates. Default: qfq hfq.",
+        choices=ADJUSTED_UPDATE_TYPES,
+        default=DEFAULT_ADJUST_TYPES,
+        help=(
+            "Adjusted price types to update after daily updates. "
+            "Default: hfq. hfq is merged incrementally; qfq is rebuilt for changed stocks only when explicitly requested."
+        ),
     )
     parser.add_argument(
         "--no-adj-factor",
@@ -151,7 +155,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--no-adjusted",
         action="store_true",
-        help="Do not rebuild qfq/hfq files after daily updates.",
+        help="Do not update hfq or rebuild qfq files after daily updates.",
     )
     parser.add_argument(
         "--raw-daily-root",
@@ -224,10 +228,13 @@ def parse_args() -> argparse.Namespace:
         help=f"Backup directory for existing CSV files. Default: {DEFAULT_BACKUP_ROOT}",
     )
     parser.add_argument(
-        "--no-backup",
+        "--backup",
+        dest="create_backup",
         action="store_true",
-        help="Do not move existing output files to backups before replacing them.",
+        help="Move existing output files to backups before replacing them. Default: off.",
     )
+    parser.add_argument("--no-backup", dest="create_backup", action="store_false", help=argparse.SUPPRESS)
+    parser.set_defaults(create_backup=False)
     return parser.parse_args()
 
 
@@ -243,6 +250,7 @@ def parse_date_arg(value: str | None) -> date | None:
     if not value:
         return None
     text = str(value).strip()
+    # Accept both provider dates and local ISO dates at the CLI boundary.
     if len(text) == 8 and text.isdigit():
         return datetime.strptime(text, "%Y%m%d").date()
     return datetime.strptime(text, "%Y-%m-%d").date()
@@ -263,6 +271,7 @@ def local_date(value: date | None) -> str:
 def read_existing_csv(path: Path, columns: list[str]):
     pd = import_pandas()
     if not path.exists() or path.stat().st_size == 0:
+        # Missing files are handled as empty tables so init-missing can create them.
         return pd.DataFrame(columns=columns)
     frame = pd.read_csv(path, dtype={"code": str, "trade_date": str})
     for column in columns:
@@ -278,6 +287,7 @@ def max_trade_date(frame) -> date | None:
     dates = dates[dates.str.fullmatch(r"\d{4}-\d{2}-\d{2}")]
     if dates.empty:
         return None
+    # ISO date strings sort in calendar order.
     return datetime.strptime(dates.max(), "%Y-%m-%d").date()
 
 
@@ -311,12 +321,14 @@ def choose_start_date(
 ) -> tuple[date | None, str | None]:
     last_trade_date = max_trade_date(existing_daily)
     if last_trade_date is not None:
+        # Normal incremental update starts from the day after local data ends.
         start = last_trade_date + timedelta(days=1)
         if requested_start is not None and requested_start > start:
             start = requested_start
         return start, local_date(last_trade_date)
 
     if not init_missing:
+        # Missing files are skipped unless the caller asks to initialize them.
         return None, None
 
     start = requested_start or stock_list_date
@@ -336,6 +348,7 @@ def merge_local_rows(existing, new_rows, columns: list[str]):
             merged[column] = ""
     if not merged.empty:
         merged["code"] = merged["code"].astype(str).str.zfill(6)
+        # Re-fetching an overlap should replace older rows for the same date.
         merged = merged.drop_duplicates(subset=["code", "trade_date"], keep="last")
         merged = merged.sort_values(["code", "trade_date"], kind="stable")
     return merged[columns]
@@ -357,11 +370,41 @@ def merge_raw_rows(existing_path: Path, raw_rows, subset: list[str]):
     for column in subset:
         if column not in merged.columns:
             merged[column] = ""
+    # Raw files keep provider fields but still dedupe by the provider key.
     merged = merged.drop_duplicates(subset=subset, keep="last")
     sort_columns = [column for column in subset if column in merged.columns]
     if sort_columns:
         merged = merged.sort_values(sort_columns, kind="stable")
     return merged
+
+
+def build_missing_hfq_rows(merged_daily, merged_adj, existing_hfq):
+    """Build hfq rows only for trade dates not already present in existing_hfq."""
+    pd = import_pandas()
+    if merged_daily.empty:
+        return pd.DataFrame(columns=DAILY_PRICE_COLUMNS)
+
+    daily_keys = merged_daily[["code", "trade_date"]].copy()
+    daily_keys["code"] = daily_keys["code"].astype(str).str.zfill(6)
+
+    if existing_hfq.empty:
+        missing_daily = merged_daily.copy()
+    else:
+        # hfq does not need a full rebuild when only new dates are missing.
+        existing_keys = existing_hfq[["code", "trade_date"]].copy()
+        existing_keys["code"] = existing_keys["code"].astype(str).str.zfill(6)
+        missing_keys = daily_keys.merge(
+            existing_keys.drop_duplicates(),
+            on=["code", "trade_date"],
+            how="left",
+            indicator=True,
+        )
+        missing_keys = missing_keys[missing_keys["_merge"].eq("left_only")][["code", "trade_date"]]
+        if missing_keys.empty:
+            return pd.DataFrame(columns=DAILY_PRICE_COLUMNS)
+        missing_daily = merged_daily.merge(missing_keys, on=["code", "trade_date"], how="inner")
+
+    return build_adjusted_daily(missing_daily, merged_adj, "hfq")
 
 
 def append_etl_log(
@@ -414,7 +457,7 @@ def run_update_daily(
     daily_root: Path = DEFAULT_DAILY_ROOT,
     adj_factor_root: Path = DEFAULT_ADJ_FACTOR_ROOT,
     daily_output_root: Path = DEFAULT_DAILY_OUTPUT_ROOT,
-    adjust_types: Iterable[str] = ADJUSTED_TYPES,
+    adjust_types: Iterable[str] = DEFAULT_ADJUST_TYPES,
     update_adj_factor: bool = True,
     rebuild_adjusted: bool = True,
     raw_daily_root: Path = DEFAULT_RAW_DAILY_ROOT,
@@ -430,7 +473,7 @@ def run_update_daily(
     write_log: bool = True,
     log_path: Path = DEFAULT_LOG,
     backup_root: Path = DEFAULT_BACKUP_ROOT,
-    create_backup: bool = True,
+    create_backup: bool = False,
 ) -> dict:
     if not token:
         raise ValueError("Tushare token is required.")
@@ -482,6 +525,7 @@ def run_update_daily(
                     init_missing,
                 )
                 if daily_start is None:
+                    # No local file and init-missing is off.
                     missing_count += 1
                     skipped_count += 1
                     continue
@@ -489,6 +533,7 @@ def run_update_daily(
                 daily_changed = False
 
                 if daily_start <= requested_end:
+                    # Fetch only the missing date window for this stock.
                     raw_daily = fetch_daily_with_retries(
                         token,
                         ts_code,
@@ -531,6 +576,7 @@ def run_update_daily(
 
                 adj_changed = False
                 merged_adj = None
+                adjusted_changed = False
                 if update_adj_factor:
                     existing_adj = read_existing_csv(adj_path, ADJ_FACTOR_COLUMNS)
                     adj_last_date = max_trade_date(existing_adj)
@@ -543,6 +589,7 @@ def run_update_daily(
 
                     merged_adj = existing_adj
                     if adj_start is not None and adj_start <= requested_end:
+                        # Factor updates have their own cursor because factor files may lag.
                         raw_adj = fetch_adj_factor_with_retries(
                             token,
                             ts_code,
@@ -581,26 +628,51 @@ def run_update_daily(
                             if backup_path:
                                 backup_paths.append(str(backup_path))
 
-                if rebuild_adjusted and (daily_changed or adj_changed):
+                if rebuild_adjusted:
                     if merged_adj is None:
                         merged_adj = read_existing_csv(adj_path, ADJ_FACTOR_COLUMNS)
                     for adjust_type in adjust_types:
-                        adjusted = build_adjusted_daily(merged_daily, merged_adj, adjust_type)
-                        adjusted_rows += len(adjusted)
-                        if dry_run:
-                            continue
                         output_path = Path(daily_output_root) / adjust_type / f"{code}.csv"
-                        backup_path = write_adjusted_csv(
-                            adjusted,
-                            output_path,
-                            backup_root=Path(backup_root),
-                            backup_timestamp=backup_timestamp,
-                            create_backup=create_backup,
-                        )
-                        if backup_path:
-                            backup_paths.append(str(backup_path))
+                        existing_adjusted = read_existing_csv(output_path, DAILY_PRICE_COLUMNS)
 
-                if daily_changed or adj_changed:
+                        if adjust_type == "hfq":
+                            # hfq can append missing rows without changing old rows.
+                            new_adjusted = build_missing_hfq_rows(
+                                merged_daily,
+                                merged_adj,
+                                existing_adjusted,
+                            )
+                            if new_adjusted.empty:
+                                continue
+                            adjusted = merge_local_rows(
+                                existing_adjusted,
+                                new_adjusted,
+                                DAILY_PRICE_COLUMNS,
+                            )
+                            adjusted_rows += len(new_adjusted)
+                            adjusted_changed = True
+                        elif adjust_type == "qfq":
+                            # qfq uses the latest factor, so changed stocks need a rebuild.
+                            if not daily_changed and not adj_changed and not existing_adjusted.empty:
+                                continue
+                            adjusted = build_adjusted_daily(merged_daily, merged_adj, adjust_type)
+                            adjusted_rows += len(adjusted)
+                            adjusted_changed = True
+                        else:
+                            raise ValueError(f"Unsupported adjust_type: {adjust_type}")
+
+                        if not dry_run:
+                            backup_path = write_adjusted_csv(
+                                adjusted,
+                                output_path,
+                                backup_root=Path(backup_root),
+                                backup_timestamp=backup_timestamp,
+                                create_backup=create_backup,
+                            )
+                            if backup_path:
+                                backup_paths.append(str(backup_path))
+
+                if daily_changed or adj_changed or adjusted_changed:
                     updated_codes.append(code)
                 else:
                     skipped_count += 1
@@ -701,7 +773,7 @@ def main() -> int:
             stop_on_error=args.stop_on_error,
             write_log=not args.no_log,
             backup_root=args.backup_root,
-            create_backup=not args.no_backup,
+            create_backup=args.create_backup,
         )
         action = "Dry run updated" if args.dry_run else "Updated"
         print(
@@ -713,7 +785,7 @@ def main() -> int:
         print(
             f"New rows: daily={result['daily_new_rows']}, "
             f"adj_factor={result['adj_factor_new_rows']}, "
-            f"adjusted_rebuilt_rows={result['adjusted_rows']}."
+            f"adjusted_rows={result['adjusted_rows']}."
         )
         for backup_path in result["backup_paths"]:
             print(f"Backed up previous file to {backup_path}")

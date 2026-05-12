@@ -26,6 +26,7 @@ def build_eastmoney_secid(code: str, exchange: str) -> str:
         return f"1.{code}"
     if exchange in {"SZSE", "BSE"}:
         return f"0.{code}"
+    # Fall back to code prefixes when the local exchange is missing.
     if code.startswith(("60", "68")):
         return f"1.{code}"
     if code.startswith(("00", "30", "4", "8", "9")):
@@ -48,6 +49,7 @@ def build_tushare_ts_code(code: str, exchange: str) -> str:
 
 
 def _infer_tushare_suffix(code: str) -> str:
+    """Infer a Tushare suffix from common A-share code prefixes."""
     if code.startswith(("60", "68")):
         return "SH"
     if code.startswith(("00", "30")):
@@ -58,6 +60,7 @@ def _infer_tushare_suffix(code: str) -> str:
 
 
 def _market_prefix(code: str, exchange: str) -> str:
+    """Infer the short market prefix used by Sina and Tencent."""
     exchange = (exchange or "").upper()
     prefix_by_exchange = {
         "SSE": "sh",
