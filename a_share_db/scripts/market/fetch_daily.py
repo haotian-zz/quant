@@ -38,6 +38,7 @@ from a_share_db.utils.progress import ProgressReporter
 from a_share_db.utils.provider_codes import build_tushare_ts_code
 
 
+# Defaults mirror the local data layout and keep CLI/import behavior aligned.
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_STOCK_BASIC = STOCK_BASIC_PATH
 DEFAULT_OUTPUT_ROOT = DAILY_NONE_ROOT
@@ -229,9 +230,11 @@ def select_stock_rows(stock_basic, codes: list[str], all_stocks: bool, limit_sto
         missing = [code for code in codes if code not in found]
         if missing:
             raise ValueError("Codes not found in stock_basic.csv: " + ", ".join(missing))
+        # Preserve explicit caller order for focused test runs.
         selected["__order"] = selected["code"].map({code: index for index, code in enumerate(codes)})
         selected = selected.sort_values("__order", kind="stable").drop(columns=["__order"])
     else:
+        # Full-market jobs use stable ordering so progress is repeatable.
         selected = stock_basic.sort_values(["exchange", "code"], kind="stable").copy()
 
     if limit_stocks is not None:
@@ -242,6 +245,8 @@ def select_stock_rows(stock_basic, codes: list[str], all_stocks: bool, limit_sto
 
 
 def fetch_from_tushare(token: str, ts_code: str, start_date: str | None, end_date: str | None):
+    # Tushare ts_code is generated only for the provider request.
+    # The formal table keeps the local six-digit code.
     ts = import_tushare()
     ts.set_token(token)
     pro = ts.pro_api()
@@ -306,6 +311,7 @@ def convert_tushare_daily(raw, name_by_code: dict[str, str]):
     output["update_time"] = update_time
 
     output = output[DAILY_PRICE_COLUMNS]
+    # Drop malformed provider rows before writing the formal table.
     output = output[output["code"].str.fullmatch(r"\d{6}", na=False)]
     output = output[output["trade_date"].str.fullmatch(r"\d{4}-\d{2}-\d{2}", na=False)]
     output = output.sort_values(["code", "trade_date"], kind="stable")
@@ -347,6 +353,7 @@ def write_csv(
     try:
         temp_path.replace(path)
     except Exception:
+        # If replacement fails after moving the old file, restore it.
         if backup_path and backup_path.exists() and not path.exists():
             backup_path.replace(path)
         raise
@@ -363,6 +370,7 @@ def build_backup_path(path: Path, backup_root: Path, backup_timestamp: str) -> P
     try:
         relative_path = path.resolve().relative_to(PROJECT_ROOT.resolve())
     except ValueError:
+        # External output paths are still backed up under backup_root.
         if path.is_absolute():
             relative_path = Path("external").joinpath(*path.parts[1:])
         else:
@@ -456,6 +464,7 @@ def run_daily_etl(
         stocks = select_stock_rows(stock_basic, selected_codes, all_stocks, limit_stocks)
         stock_count = len(stocks)
         name_by_code = dict(zip(stock_basic["code"], stock_basic["name"]))
+        # Progress is per stock because each stock writes one daily file.
         progress = ProgressReporter(stock_count, every=progress_every, label="Fetch daily")
 
         for index, stock in enumerate(stocks.to_dict("records"), start=1):
@@ -500,6 +509,7 @@ def run_daily_etl(
             row_count += len(normalized)
 
             if not dry_run:
+                # Formal output contains local fields and local units only.
                 backup_path = write_csv(
                     normalized,
                     output_path,
@@ -511,6 +521,7 @@ def run_daily_etl(
                     backup_paths.append(str(backup_path))
 
             if write_raw and not dry_run:
+                # Raw output is optional and keeps provider fields for debugging.
                 backup_path = write_csv(
                     raw,
                     Path(raw_output_root) / f"{code}.csv",
@@ -522,6 +533,7 @@ def run_daily_etl(
                     backup_paths.append(str(backup_path))
 
             if request_interval:
+                # Keep long jobs from hammering the provider API.
                 time.sleep(request_interval)
             progress.maybe_print(
                 index,
@@ -532,6 +544,7 @@ def run_daily_etl(
 
         status = "partial" if failures else "success"
         if failures:
+            # Keep the returned error message bounded so logs remain readable.
             error_message = "; ".join(
                 f"{item['code']}({item['ts_code']}): {item['error']}" for item in failures[:20]
             )

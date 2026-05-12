@@ -54,6 +54,7 @@ from a_share_db.scripts.market.fetch_daily import (
 from a_share_db.utils.provider_codes import build_tushare_ts_code
 
 
+# Defaults point at formal local tables; raw roots are used only when --with-raw is set.
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_STOCK_BASIC = STOCK_BASIC_PATH
 DEFAULT_DAILY_ROOT = DAILY_NONE_ROOT
@@ -259,12 +260,14 @@ def parse_date_arg(value: str | None) -> date | None:
 def provider_date(value: date | None) -> str | None:
     if value is None:
         return None
+    # Provider APIs use compact YYYYMMDD dates.
     return value.strftime("%Y%m%d")
 
 
 def local_date(value: date | None) -> str:
     if value is None:
         return ""
+    # Formal CSV tables use ISO dates.
     return value.strftime("%Y-%m-%d")
 
 
@@ -276,6 +279,7 @@ def read_existing_csv(path: Path, columns: list[str]):
     frame = pd.read_csv(path, dtype={"code": str, "trade_date": str})
     for column in columns:
         if column not in frame.columns:
+            # Old or partial files can still be merged after missing columns are filled.
             frame[column] = ""
     return frame[columns]
 
@@ -298,6 +302,7 @@ def min_trade_date(frame) -> date | None:
     dates = dates[dates.str.fullmatch(r"\d{4}-\d{2}-\d{2}")]
     if dates.empty:
         return None
+    # Used when an adj_factor file is empty but daily data already exists.
     return datetime.strptime(dates.min(), "%Y-%m-%d").date()
 
 
@@ -308,6 +313,7 @@ def parse_stock_list_date(value: str | None) -> date | None:
     if not text:
         return None
     try:
+        # stock_basic may store either YYYYMMDD or YYYY-MM-DD depending on source.
         return parse_date_arg(text)
     except ValueError:
         return None
@@ -332,11 +338,13 @@ def choose_start_date(
         return None, None
 
     start = requested_start or stock_list_date
+    # Returning None here means the caller cannot initialize this stock safely.
     return start, None
 
 
 def merge_local_rows(existing, new_rows, columns: list[str]):
     pd = import_pandas()
+    # Merge by local formal keys and keep the latest fetched version for overlaps.
     if existing.empty:
         merged = new_rows.copy()
     elif new_rows.empty:
@@ -357,6 +365,7 @@ def merge_local_rows(existing, new_rows, columns: list[str]):
 def merge_raw_rows(existing_path: Path, raw_rows, subset: list[str]):
     pd = import_pandas()
     if raw_rows.empty:
+        # Preserve existing raw files when a provider request returns no rows.
         if existing_path.exists() and existing_path.stat().st_size > 0:
             return pd.read_csv(existing_path, dtype=str).fillna("")
         return raw_rows.copy()
@@ -388,6 +397,7 @@ def build_missing_hfq_rows(merged_daily, merged_adj, existing_hfq):
     daily_keys["code"] = daily_keys["code"].astype(str).str.zfill(6)
 
     if existing_hfq.empty:
+        # No existing hfq file means all available daily rows need hfq output.
         missing_daily = merged_daily.copy()
     else:
         # hfq does not need a full rebuild when only new dates are missing.
@@ -508,6 +518,7 @@ def run_update_daily(
         stocks = select_stock_rows(stock_basic, selected_codes, all_stocks, limit_stocks)
         stock_count = len(stocks)
         name_by_code = dict(zip(stock_basic["code"], stock_basic["name"]))
+        # Progress is per stock; extra counters show how much data was actually added.
         progress = ProgressReporter(stock_count, every=progress_every, label="Update daily")
 
         for index, stock in enumerate(stocks.to_dict("records"), start=1):
@@ -517,6 +528,8 @@ def run_update_daily(
             adj_path = Path(adj_factor_root) / f"{code}.csv"
 
             try:
+                # The daily file itself is the checkpoint. This avoids relying on
+                # a global "last run" value when one stock fails halfway.
                 existing_daily = read_existing_csv(daily_path, DAILY_PRICE_COLUMNS)
                 daily_start, _last_trade_date = choose_start_date(
                     existing_daily,
@@ -551,6 +564,7 @@ def run_update_daily(
                     row_count += len(new_daily)
 
                     if not dry_run and daily_changed:
+                        # Rewrite the same per-stock file so downstream file paths stay stable.
                         backup_path = write_daily_csv(
                             merged_daily,
                             daily_path,
@@ -562,6 +576,7 @@ def run_update_daily(
                             backup_paths.append(str(backup_path))
 
                     if write_raw and not dry_run and not raw_daily.empty:
+                        # Raw rows keep provider fields and are merged by provider keys.
                         raw_path = Path(raw_daily_root) / f"{code}.csv"
                         merged_raw = merge_raw_rows(raw_path, raw_daily, ["ts_code", "trade_date"])
                         backup_path = write_daily_csv(
@@ -581,6 +596,7 @@ def run_update_daily(
                     existing_adj = read_existing_csv(adj_path, ADJ_FACTOR_COLUMNS)
                     adj_last_date = max_trade_date(existing_adj)
                     if adj_last_date is not None:
+                        # adj_factor has its own cursor because it may lag or be rebuilt separately.
                         adj_start = adj_last_date + timedelta(days=1)
                         if requested_start is not None and requested_start > adj_start:
                             adj_start = requested_start
@@ -605,6 +621,7 @@ def run_update_daily(
                         row_count += len(new_adj)
 
                         if not dry_run and adj_changed:
+                            # Formal factor output is separate from daily prices for rebuild reuse.
                             backup_path = write_adj_factor_csv(
                                 merged_adj,
                                 adj_path,
@@ -616,6 +633,7 @@ def run_update_daily(
                                 backup_paths.append(str(backup_path))
 
                         if write_raw and not dry_run and not raw_adj.empty:
+                            # Raw factor rows are optional provider trace data.
                             raw_path = Path(raw_adj_factor_root) / f"{code}.csv"
                             merged_raw = merge_raw_rows(raw_path, raw_adj, ["ts_code", "trade_date"])
                             backup_path = write_adj_factor_csv(
@@ -630,6 +648,7 @@ def run_update_daily(
 
                 if rebuild_adjusted:
                     if merged_adj is None:
+                        # When --no-adj-factor is used, reuse the existing factor file.
                         merged_adj = read_existing_csv(adj_path, ADJ_FACTOR_COLUMNS)
                     for adjust_type in adjust_types:
                         output_path = Path(daily_output_root) / adjust_type / f"{code}.csv"
@@ -662,6 +681,7 @@ def run_update_daily(
                             raise ValueError(f"Unsupported adjust_type: {adjust_type}")
 
                         if not dry_run:
+                            # Adjusted outputs are local derived data, not provider data.
                             backup_path = write_adjusted_csv(
                                 adjusted,
                                 output_path,
@@ -675,11 +695,14 @@ def run_update_daily(
                 if daily_changed or adj_changed or adjusted_changed:
                     updated_codes.append(code)
                 else:
+                    # No new provider rows and no derived output changes for this stock.
                     skipped_count += 1
 
                 if request_interval:
+                    # Keep long updates from hammering provider APIs.
                     time.sleep(request_interval)
             except Exception as exc:
+                # Continue all-stock updates unless the caller explicitly wants fail-fast.
                 failures.append({"code": code, "ts_code": ts_code, "error": str(exc)})
                 if stop_on_error:
                     raise
@@ -698,6 +721,7 @@ def run_update_daily(
 
         status = "partial" if failures else "success"
         if failures:
+            # Keep log messages bounded even when many stocks fail.
             error_message = "; ".join(
                 f"{item['code']}({item['ts_code']}): {item['error']}" for item in failures[:20]
             )

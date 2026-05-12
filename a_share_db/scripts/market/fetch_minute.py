@@ -298,12 +298,16 @@ def build_calendar_day_windows(
 def read_trade_dates(path: Path, start_dt: datetime | None, end_dt: datetime | None) -> list:
     pd = import_pandas()
     if not path.exists() or start_dt is None or end_dt is None:
+        # Missing calendar or open-ended ranges fall back to calendar-day windows.
         return []
     frame = pd.read_csv(path, dtype=str).fillna("")
     required = {"calendar_date", "is_trading_day"}
     if not required.issubset(frame.columns):
+        # Invalid calendar schema should not stop minute fetching completely.
         return []
 
+    # Use all trading days in the local calendar, regardless of exchange.
+    # A-share BSE can reuse SSE calendar by project convention.
     trading = frame[frame["is_trading_day"].astype(str).isin({"1", "1.0", "true", "True"})].copy()
     dates = pd.to_datetime(trading["calendar_date"], errors="coerce").dropna()
     if dates.empty:
@@ -318,7 +322,9 @@ def window_trading_days_for_frequency(frequency: str, override: int | None = Non
     if override is not None:
         if override < 1:
             raise ValueError("window-trading-days must be greater than or equal to 1.")
+        # Manual override is useful for provider throttling or debugging.
         return override
+    # Defaults are chosen to maximize rows while staying under 8000.
     return DEFAULT_MINUTE_WINDOW_TRADING_DAYS[frequency]
 
 
@@ -340,8 +346,10 @@ def build_trading_day_windows(
         chunk = trade_dates[start_index : start_index + window_trading_days]
         chunk_start_date = chunk[0]
         chunk_end_date = chunk[-1]
+        # Request the whole first/last trading day in the chunk.
         window_start = datetime.combine(chunk_start_date, datetime.min.time())
         window_end = datetime.combine(chunk_end_date, datetime.max.time().replace(microsecond=0))
+        # Respect exact user-provided boundaries on the outer windows.
         if chunk_start_date == start_dt.date():
             window_start = start_dt
         if chunk_end_date == end_dt.date():
@@ -359,6 +367,7 @@ def build_request_windows(
     fallback_window_days: int,
 ) -> list[tuple[datetime | None, datetime | None]]:
     if start_dt is None or end_dt is None:
+        # Open-ended provider queries cannot be safely split by local calendar.
         return [(start_dt, end_dt)]
     if trade_dates:
         # Prefer trading-day windows so each request uses as much of the 8000-row
@@ -481,6 +490,7 @@ def convert_tushare_minute(raw, name_by_code: dict[str, str], frequency: str):
     output["update_time"] = update_time
 
     output = output[MINUTE_BAR_COLUMNS]
+    # Formal output keeps only valid local stock codes and timestamps.
     output = output[output["code"].str.fullmatch(r"\d{6}", na=False)]
     output = output[output["bar_end_time"].str.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", na=False)]
     # The local key is code + frequency + adjust_type + bar_end_time.
@@ -579,6 +589,7 @@ def run_minute_etl(
         local_frequencies = normalize_frequencies(frequencies)
         start_dt = parse_datetime_arg(start_date, end_of_day=False)
         end_dt = parse_datetime_arg(end_date, end_of_day=True)
+        # Trading-day windows are shared across stocks, then resized per frequency.
         trade_dates = read_trade_dates(Path(trade_calendar_path), start_dt, end_dt)
         windows_by_frequency = {}
         trading_days_by_frequency = {}
@@ -643,6 +654,7 @@ def run_minute_etl(
                     row_count += len(normalized)
 
                     if not dry_run:
+                        # Formal output is unadjusted minute data only.
                         # write_csv uses a temp file and optional backup.
                         backup_path = write_csv(
                             normalized,
@@ -694,6 +706,7 @@ def run_minute_etl(
 
         status = "partial" if failures else "success"
         if failures:
+            # Keep the returned error message bounded so logs remain readable.
             error_message = "; ".join(
                 f"{item['code']}({item['ts_code']} {item['frequency']}): {item['error']}"
                 for item in failures[:20]

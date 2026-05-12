@@ -32,6 +32,7 @@ from a_share_db.constant.paths import (
 from a_share_db.utils.progress import ProgressReporter
 
 
+# Paths stay centralized so CLI calls and import calls use the same defaults.
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_STOCK_BASIC = STOCK_BASIC_PATH
 DEFAULT_NONE_ROOT = DAILY_NONE_ROOT
@@ -179,6 +180,7 @@ def load_requested_codes(codes: Iterable[str] | None, codes_file: Path | None) -
     for code in selected:
         value = str(code).strip().split(".")[0].zfill(6)
         if value and value not in seen:
+            # Keep caller order while removing duplicate stock codes.
             normalized.append(value)
             seen.add(value)
     return normalized
@@ -192,6 +194,7 @@ def select_codes(stock_basic, codes: list[str], all_stocks: bool, limit_stocks: 
         missing = [code for code in codes if code not in available]
         if missing:
             raise ValueError("Codes not found in stock_basic.csv: " + ", ".join(missing))
+        # Explicit code order is useful for small smoke tests.
         selected = codes
     else:
         sort_columns = ["code"]
@@ -211,6 +214,8 @@ def build_adjusted_daily(none_daily, adj_factor, adjust_type: str):
         raise ValueError(f"Unsupported adjusted type: {adjust_type}")
 
     pd = import_pandas()
+    # Inner join drops dates that do not have a matching adjustment factor.
+    # That is safer than inventing factors for missing dates.
     merged = none_daily.merge(
         adj_factor[["code", "trade_date", "adjust_factor"]],
         on=["code", "trade_date"],
@@ -228,12 +233,15 @@ def build_adjusted_daily(none_daily, adj_factor, adjust_type: str):
 
     if adjust_type == "qfq":
         # qfq anchors all prices to the latest available adjustment factor.
+        # When a new latest factor appears, old qfq rows can change and should
+        # be rebuilt for the stock.
         latest_factor = merged["adjust_factor"].dropna().iloc[-1]
         multiplier = merged["adjust_factor"] / latest_factor
     else:
         # hfq grows with the raw factor and can be appended for missing dates.
         multiplier = merged["adjust_factor"]
 
+    # Apply the same factor to all OHLC prices and pre_close for the date.
     for column in price_columns:
         merged[column] = merged[column] * multiplier
 
@@ -249,6 +257,7 @@ def read_daily_inputs(code: str, none_root: Path, adj_factor_root: Path):
     pd = import_pandas()
     none_path = Path(none_root) / f"{code}.csv"
     adj_path = Path(adj_factor_root) / f"{code}.csv"
+    # Adjusted prices are derived only from local formal tables.
     if not none_path.exists():
         raise FileNotFoundError(f"Missing none daily file: {none_path}")
     if not adj_path.exists():
@@ -281,6 +290,7 @@ def write_csv(
     try:
         temp_path.replace(path)
     except Exception:
+        # If replacement fails after moving the old file, restore it.
         if backup_path and backup_path.exists() and not path.exists():
             backup_path.replace(path)
         raise
@@ -297,6 +307,7 @@ def build_backup_path(path: Path, backup_root: Path, backup_timestamp: str) -> P
     try:
         relative_path = path.resolve().relative_to(PROJECT_ROOT.resolve())
     except ValueError:
+        # External paths are still backed up inside backup_root.
         if path.is_absolute():
             relative_path = Path("external").joinpath(*path.parts[1:])
         else:
@@ -376,6 +387,7 @@ def run_build_adjusted_daily(
         requested_codes = load_requested_codes(codes, codes_file)
         selected_codes = select_codes(stock_basic, requested_codes, all_stocks, limit_stocks)
         stock_count = len(selected_codes)
+        # Progress is per stock because each stock can build multiple adjust types.
         progress = ProgressReporter(stock_count, every=progress_every, label="Build adjusted daily")
 
         for index, code in enumerate(selected_codes, start=1):
@@ -390,6 +402,7 @@ def run_build_adjusted_daily(
                     adjusted = build_adjusted_daily(none_daily, adj_factor, adjust_type)
                     row_count += len(adjusted)
                     if dry_run:
+                        # Dry run validates inputs and formulas without writing CSV files.
                         continue
                     backup_path = write_csv(
                         adjusted,
@@ -401,6 +414,7 @@ def run_build_adjusted_daily(
                     if backup_path:
                         backup_paths.append(str(backup_path))
             except Exception as exc:
+                # Long all-stock rebuilds should finish other stocks unless requested otherwise.
                 failures.append({"code": code, "error": str(exc)})
                 if stop_on_error:
                     raise
