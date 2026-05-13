@@ -361,6 +361,8 @@ Formal output keeps local fields only. Tushare `ts_code` and provider `freq` are
 
 Request windows are sized by frequency using local `trade_calendar.csv` so each Tushare request stays below 8000 rows while covering as many trading days as possible. Defaults are `1m=33`, `5m=163`, `15m=470`, `30m=888`, `60m=1599` trading days per request. Use `--window-trading-days` only when you need to override this.
 
+For each stock, the effective start time is `max(--start-date, stock_basic.list_date)`, so full-market history jobs do not waste requests before a stock was listed.
+
 Single-stock smoke test:
 
 ```bash

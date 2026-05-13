@@ -12,7 +12,7 @@ import csv
 import os
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterable
 
@@ -264,6 +264,30 @@ def parse_datetime_arg(value: str | None, end_of_day: bool = False) -> datetime 
     raise ValueError(f"Unsupported datetime format: {value}")
 
 
+def parse_stock_list_date(value: str | None) -> date | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "nat", "none"}:
+        return None
+    try:
+        if len(text) == 8 and text.isdigit():
+            return datetime.strptime(text, "%Y%m%d").date()
+        return datetime.strptime(text, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def choose_stock_start_datetime(requested_start: datetime | None, list_date: date | None) -> datetime | None:
+    if list_date is None:
+        return requested_start
+    list_start = datetime.combine(list_date, datetime.min.time())
+    if requested_start is None or list_start > requested_start:
+        # Do not waste requests on windows before the stock was listed.
+        return list_start
+    return requested_start
+
+
 def provider_datetime(value: datetime | None) -> str | None:
     if value is None:
         return None
@@ -372,7 +396,15 @@ def build_request_windows(
     if trade_dates:
         # Prefer trading-day windows so each request uses as much of the 8000-row
         # limit as possible without crossing it.
-        windows = build_trading_day_windows(start_dt, end_dt, trade_dates, window_trading_days)
+        eligible_trade_dates = [
+            item for item in trade_dates if start_dt.date() <= item <= end_dt.date()
+        ]
+        windows = build_trading_day_windows(
+            start_dt,
+            end_dt,
+            eligible_trade_dates,
+            window_trading_days,
+        )
         if windows:
             return windows
     # Fallback keeps the command usable before trade_calendar.csv is built.
@@ -589,20 +621,13 @@ def run_minute_etl(
         local_frequencies = normalize_frequencies(frequencies)
         start_dt = parse_datetime_arg(start_date, end_of_day=False)
         end_dt = parse_datetime_arg(end_date, end_of_day=True)
-        # Trading-day windows are shared across stocks, then resized per frequency.
+        # Load the broad calendar once; each stock later filters it by list_date.
         trade_dates = read_trade_dates(Path(trade_calendar_path), start_dt, end_dt)
-        windows_by_frequency = {}
         trading_days_by_frequency = {}
         for frequency in local_frequencies:
-            trading_days = window_trading_days_for_frequency(frequency, window_trading_days)
-            trading_days_by_frequency[frequency] = trading_days
-            windows_by_frequency[frequency] = build_request_windows(
+            trading_days_by_frequency[frequency] = window_trading_days_for_frequency(
                 frequency,
-                start_dt,
-                end_dt,
-                trade_dates,
-                trading_days,
-                window_days,
+                window_trading_days,
             )
 
         stock_basic = read_stock_basic(Path(stock_basic_path))
@@ -619,12 +644,37 @@ def run_minute_etl(
         for stock in stocks.to_dict("records"):
             code = stock["code"]
             ts_code = build_tushare_ts_code(code, stock.get("exchange", ""))
+            stock_start_dt = choose_stock_start_datetime(
+                start_dt,
+                parse_stock_list_date(stock.get("list_date")),
+            )
             for frequency in local_frequencies:
                 current_job += 1
                 output_path = Path(output_root) / frequency / "none" / f"{code}.csv"
                 provider_freq = TUSHARE_MINUTE_FREQ_MAP[frequency]
-                windows = windows_by_frequency[frequency]
+                windows = build_request_windows(
+                    frequency,
+                    stock_start_dt,
+                    end_dt,
+                    trade_dates,
+                    trading_days_by_frequency[frequency],
+                    window_days,
+                )
                 try:
+                    if stock_start_dt is not None and end_dt is not None and stock_start_dt > end_dt:
+                        # Stock listed after the requested end date.
+                        skipped_count += 1
+                        progress.maybe_print(
+                            current_job,
+                            row_count=row_count,
+                            skipped_count=skipped_count,
+                            failure_count=len(failures),
+                            extra=(
+                                f"requests={request_count} "
+                                f"window_trading_days={trading_days_by_frequency[frequency]}"
+                            ),
+                        )
+                        continue
                     if resume and output_path.exists() and output_path.stat().st_size > 0:
                         # Full-history fetch can skip completed stock/frequency files.
                         skipped_count += 1

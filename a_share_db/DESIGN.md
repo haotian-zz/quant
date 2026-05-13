@@ -613,6 +613,8 @@ Tushare `stk_mins` 字段转换关系：
 
 如果本地交易日历不存在，脚本会退回到 `--window-days` 自然日窗口。正常构建前应先生成 `trade_calendar.csv`。
 
+全市场分钟历史拉取时，每只股票的实际开始时间为 `max(命令 start-date, stock_basic.list_date)`，避免对上市前区间发起大量空请求。
+
 原始分钟数据如需保留，存放在：
 
 ```text
