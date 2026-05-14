@@ -1,6 +1,14 @@
 # A Share DB
 
-`a_share_db` is a local CSV data warehouse for A-share research. The formal CSV tables use local domain fields only; provider-specific fields such as Tushare `ts_code` are converted inside ETL scripts and are not stored in formal tables.
+`a_share_db` is a local A-share research data warehouse. The storage plan is:
+
+```text
+CSV raw/temp layer -> Parquet formal data layer -> DuckDB query layer
+```
+
+Current ETL scripts still fetch into CSV first. Parquet will become the formal analysis layer. DuckDB is planned as the later SQL query layer over Parquet.
+
+Formal tables use local domain fields only; provider-specific fields such as Tushare `ts_code` are converted inside ETL scripts and are not stored in formal tables.
 
 Local data is written under `a_share_db/data/`. This directory is ignored by git because it can become large and should be rebuilt or synced separately.
 
@@ -40,12 +48,28 @@ a_share_db/data/
 │   │       ├── qfq/
 │   │       └── hfq/
 │   └── adj_factor/
+├── parquet/
+│   ├── metadata/
+│   ├── daily/
+│   ├── minute/
+│   └── adj_factor/
 ├── raw/
+├── warehouse/
+│   └── a_share.duckdb
 ├── backups/
 └── logs/
 ```
 
 Raw provider output is off by default. Add `--with-raw` only when you need to keep third-party source rows for debugging or reconstruction.
+
+Parquet and DuckDB are not built by the current fetch commands yet. The current priority is completing CSV collection, then adding Parquet build scripts from those CSV files.
+
+The first Parquet builder mirrors the CSV layout: one formal CSV file becomes one Parquet file. Example:
+
+```text
+market_data/daily/none/600519.csv -> parquet/daily/none/600519.parquet
+market_data/minute/1m/none/600519.csv -> parquet/minute/1m/none/600519.parquet
+```
 
 ## Recommended Build Order
 
@@ -129,6 +153,26 @@ Rebuild only qfq:
 
 ```bash
 python3 a_share_db/scripts/workflows/rebuild_adjusted_daily_data.py --adjust-types qfq
+```
+
+Build Parquet from existing CSV files:
+
+```bash
+python3 a_share_db/scripts/warehouse/build_parquet.py \
+  --tables metadata daily adj_factor \
+  --resume \
+  --progress-every 100
+```
+
+Build minute Parquet after minute CSV files exist:
+
+```bash
+python3 a_share_db/scripts/warehouse/build_parquet.py \
+  --tables minute \
+  --frequencies 1m \
+  --adjust-types none \
+  --resume \
+  --progress-every 50
 ```
 
 Refresh stock master data and trade calendar:

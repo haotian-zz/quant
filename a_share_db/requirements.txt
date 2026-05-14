@@ -1,3 +1,4 @@
 pandas
 tushare
 boto3
+pyarrow

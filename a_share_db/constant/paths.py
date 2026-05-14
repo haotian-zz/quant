@@ -12,6 +12,8 @@ DATA_ROOT = PROJECT_ROOT / "data"
 METADATA_ROOT = DATA_ROOT / "metadata"
 MARKET_DATA_ROOT = DATA_ROOT / "market_data"
 RAW_ROOT = DATA_ROOT / "raw"
+PARQUET_ROOT = DATA_ROOT / "parquet"
+WAREHOUSE_ROOT = DATA_ROOT / "warehouse"
 LOG_ROOT = DATA_ROOT / "logs"
 BACKUP_ROOT = DATA_ROOT / "backups"
 
@@ -36,6 +38,15 @@ RAW_ADJ_FACTOR_ROOT = RAW_ROOT / "adj_factor"
 RAW_TUSHARE_ADJ_FACTOR_ROOT = RAW_ADJ_FACTOR_ROOT / "tushare"
 RAW_MINUTE_ROOT = RAW_ROOT / "minute"
 RAW_TUSHARE_MINUTE_ROOT = RAW_MINUTE_ROOT / "tushare"
+
+# Parquet is the planned formal analysis layer built from local CSV outputs.
+PARQUET_METADATA_ROOT = PARQUET_ROOT / "metadata"
+PARQUET_DAILY_ROOT = PARQUET_ROOT / "daily"
+PARQUET_MINUTE_ROOT = PARQUET_ROOT / "minute"
+PARQUET_ADJ_FACTOR_ROOT = PARQUET_ROOT / "adj_factor"
+
+# DuckDB is reserved as a query layer over Parquet, not the current ETL target.
+DUCKDB_PATH = WAREHOUSE_ROOT / "a_share.duckdb"
 
 # ETL logs record command status without becoming part of the data schema.
 ETL_LOG_PATH = LOG_ROOT / "etl_log.csv"

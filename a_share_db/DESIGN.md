@@ -1,15 +1,21 @@
 ````markdown
-# A 股 CSV 数据库 LLD
+# A 股本地数据仓库 LLD
 
 ## 1. 目标
 
-从 0 构建一个本地 A 股数据仓库，第一阶段使用 CSV 存储，先跑通：
+从 0 构建一个本地 A 股数据仓库。当前采用三层数据格式：
+
+```text
+CSV raw/临时层 -> Parquet 正式数据层 -> DuckDB 查询层
+```
+
+第一阶段仍先用 CSV 跑通抓取、转换和断点续跑：
 
 ```text
 股票基础信息 → 交易日历 → 日线行情 → 增量更新 → 日志记录
 ````
 
-后续如需要复杂查询，再迁移到 SQLite / DuckDB / PostgreSQL。
+随后构建 Parquet 正式数据层。DuckDB 暂时不作为落地目标，只作为后续 SQL 查询层读取 Parquet。
 
 ---
 
@@ -36,6 +42,18 @@ a_share_db/
 │   │   │       └── hfq/
 │   │   └── adj_factor/
 │   │
+│   ├── parquet/
+│   │   ├── metadata/
+│   │   ├── daily/
+│   │   │   └── {adjust_type}/
+│   │   │       └── {code}.parquet
+│   │   ├── minute/
+│   │   │   └── {frequency}/
+│   │   │       └── {adjust_type}/
+│   │   │           └── {code}.parquet
+│   │   └── adj_factor/
+│   │       └── {code}.parquet
+│   │
 │   ├── raw/
 │   │   ├── daily/
 │   │   │   └── {provider}/
@@ -49,6 +67,9 @@ a_share_db/
 │   ├── backups/
 │   │   └── {timestamp}/
 │   │
+│   ├── warehouse/
+│   │   └── a_share.duckdb
+│   │
 │   └── logs/
 │       ├── etl_log.csv
 │       └── update_status.csv
@@ -58,6 +79,8 @@ a_share_db/
 │   ├── daily.py
 │   ├── minute.py
 │   ├── trade_calendar.py
+│   ├── paths.py
+│   ├── warehouse.py
 │   └── commands.py
 │
 ├── utils/
@@ -78,17 +101,62 @@ a_share_db/
     ├── workflows/
     │   ├── update_daily_data.py
     │   └── rebuild_adjusted_daily_data.py
+    └── warehouse/
+        └── build_parquet.py
 ```
 
 ---
 
 ## 3. 数据文件设计
 
+### 3.0 存储层职责
+
+| 层级 | 路径 | 作用 |
+| ---- | ---- | ---- |
+| CSV raw/临时层 | `data/metadata/`、`data/market_data/`、`data/raw/` | 当前 ETL 直接写入；便于断点续跑、排查、临时人工检查 |
+| Parquet 正式数据层 | `data/parquet/` | 后续正式分析数据层；字段仍使用本地领域语义，不保存第三方字段 |
+| DuckDB 查询层 | `data/warehouse/a_share.duckdb` | 后续 SQL 查询入口；优先读取 Parquet，不作为当前抓取写入目标 |
+
+当前阶段继续先拉取 CSV。Parquet 构建脚本会从 CSV 正式表读取并生成列式文件。DuckDB 集成暂缓，只在设计中预留。
+
+Parquet 第一版按当前 CSV 文件粒度生成：一个正式 CSV 文件对应一个 Parquet 文件。例如：
+
+```text
+data/market_data/daily/none/600519.csv
+-> data/parquet/daily/none/600519.parquet
+
+data/market_data/minute/1m/none/600519.csv
+-> data/parquet/minute/1m/none/600519.parquet
+```
+
+暂不按 `trade_date` 分区，避免分钟数据产生海量小文件。后续如查询模式明确需要按日期裁剪，再增加 compaction/partition 脚本。
+
+Parquet 构建命令：
+
+```bash
+# 构建 metadata、daily、adj_factor 的 Parquet 正式层。
+python3 a_share_db/scripts/warehouse/build_parquet.py \
+  --tables metadata daily adj_factor \
+  --resume \
+  --progress-every 100
+
+# 构建 1m 分钟 Parquet 正式层。
+python3 a_share_db/scripts/warehouse/build_parquet.py \
+  --tables minute \
+  --frequencies 1m \
+  --adjust-types none \
+  --resume \
+  --progress-every 50
+```
+
+Parquet 构建同样遵循项目通用规则：默认不备份，只有显式传入 `--backup` 才移动旧文件到 `data/backups/`；长任务必须显示进度；正式字段仍然不能保存第三方字段名。
+
 正式数据表设计原则：
 
 ```text
-data/metadata/stock_basic.csv、data/metadata/trade_calendar.csv、data/market_data/daily/* 都是本地维护的正式表。
-正式表字段必须使用本地领域语义，不保存第三方接口字段名、第三方代码格式或数据源标记。
+data/metadata/*、data/market_data/* 是当前 CSV 正式/临时落地层。
+data/parquet/* 是目标正式数据层。
+正式字段必须使用本地领域语义，不保存第三方接口字段名、第三方代码格式或数据源标记。
 第三方原始字段、原始代码、接口来源只允许出现在 raw_* 文件或 ETL 日志中。
 第三方接口调用需要的 symbol、secid 等标识由 a_share_db/utils/provider_codes.py 按需生成。
 ```
@@ -690,6 +758,25 @@ scripts/ 下的 ETL 脚本只能引用这些常量，不在脚本内部重复定
 | `constant/daily.py`         | 日线行情字段、复权因子字段、复权类型       |
 | `constant/minute.py`        | 分钟行情字段、分钟频率、provider 频率映射 |
 | `constant/trade_calendar.py` | 交易日历字段、Tushare 字段、默认交易所列表 |
+| `constant/paths.py`         | 数据目录和正式文件路径常量              |
+| `constant/warehouse.py`     | Parquet/DuckDB 数据层相关常量        |
+| `constant/commands.py`      | 常用 wrapper 命令默认参数            |
+
+脚本组织规则：
+
+```text
+仓库根目录不放 Python 脚本。
+所有可执行命令放在 a_share_db/scripts/ 下，并按 metadata、market、workflows、warehouse 等目录分组。
+包内复用逻辑放在 a_share_db/utils/ 或未来更具体的包目录中。
+```
+
+代码注释规则：
+
+```text
+新增或修改 Python 代码时必须写必要的英文注释。
+注释要解释代码逻辑、业务意义或非显而易见的取舍，不做逐行翻译。
+__init__.py 这类默认空文件不需要注释。
+```
 
 不同数据源使用不同代码格式。主表只保存本地标准字段 `code` 和 `exchange`，第三方代码格式由 `a_share_db/utils/provider_codes.py` 按需转换。
 
@@ -882,7 +969,7 @@ P2: financials / announcements / valuation
 
 ---
 
-## 7. 后续扩展
+## 10. 后续扩展
 
 后续可扩展模块：
 
