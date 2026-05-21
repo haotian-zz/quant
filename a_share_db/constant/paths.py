@@ -75,6 +75,7 @@ DAILY_NONE_ROOT = DAILY_ROOT / "none"
 DAILY_QFQ_ROOT = DAILY_ROOT / "qfq"
 DAILY_HFQ_ROOT = DAILY_ROOT / "hfq"
 ADJ_FACTOR_ROOT = MARKET_DATA_ROOT / "adj_factor"
+DAILY_BASIC_ROOT = MARKET_DATA_ROOT / "daily_basic"
 MINUTE_ROOT = MARKET_DATA_ROOT / "minute"
 
 # Raw provider files are optional and kept away from curated local tables.
@@ -82,6 +83,8 @@ RAW_DAILY_ROOT = RAW_ROOT / "daily"
 RAW_TUSHARE_DAILY_NONE_ROOT = RAW_DAILY_ROOT / "tushare" / "none"
 RAW_ADJ_FACTOR_ROOT = RAW_ROOT / "adj_factor"
 RAW_TUSHARE_ADJ_FACTOR_ROOT = RAW_ADJ_FACTOR_ROOT / "tushare"
+RAW_DAILY_BASIC_ROOT = RAW_ROOT / "daily_basic"
+RAW_TUSHARE_DAILY_BASIC_ROOT = RAW_DAILY_BASIC_ROOT / "tushare"
 RAW_MINUTE_ROOT = RAW_ROOT / "minute"
 RAW_TUSHARE_MINUTE_ROOT = RAW_MINUTE_ROOT / "tushare"
 
@@ -90,6 +93,7 @@ PARQUET_METADATA_ROOT = PARQUET_ROOT / "metadata"
 PARQUET_DAILY_ROOT = PARQUET_ROOT / "daily"
 PARQUET_MINUTE_ROOT = PARQUET_ROOT / "minute"
 PARQUET_ADJ_FACTOR_ROOT = PARQUET_ROOT / "adj_factor"
+PARQUET_DAILY_BASIC_ROOT = PARQUET_ROOT / "daily_basic"
 
 # DuckDB is reserved as a query layer over Parquet, not the current ETL target.
 DUCKDB_PATH = WAREHOUSE_ROOT / "a_share.duckdb"

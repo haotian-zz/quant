@@ -21,15 +21,18 @@ if str(PACKAGE_ROOT) not in sys.path:
 
 from a_share_db.constant.daily import ADJUST_TYPES
 from a_share_db.constant.daily import ADJ_FACTOR_COLUMNS, DAILY_PRICE_COLUMNS
+from a_share_db.constant.daily_basic import DAILY_BASIC_COLUMNS
 from a_share_db.constant.minute import MINUTE_FREQUENCIES
 from a_share_db.constant.minute import MINUTE_BAR_COLUMNS
 from a_share_db.constant.paths import (
     ADJ_FACTOR_ROOT,
     BACKUP_ROOT,
+    DAILY_BASIC_ROOT,
     DAILY_ROOT,
     ETL_LOG_PATH,
     MINUTE_ROOT,
     PARQUET_ADJ_FACTOR_ROOT,
+    PARQUET_DAILY_BASIC_ROOT,
     PARQUET_DAILY_ROOT,
     PARQUET_METADATA_ROOT,
     PARQUET_MINUTE_ROOT,
@@ -58,8 +61,8 @@ def parse_args() -> argparse.Namespace:
         "--tables",
         nargs="+",
         choices=PARQUET_TABLES + PARQUET_ALL_TABLES,
-        default=["metadata", "daily", "adj_factor"],
-        help="Tables to build. Default: metadata daily adj_factor. Use all to include minute.",
+        default=["metadata", "daily", "adj_factor", "daily_basic"],
+        help="Tables to build. Default: metadata daily adj_factor daily_basic. Use all to include minute.",
     )
     parser.add_argument(
         "--codes",
@@ -203,6 +206,11 @@ def discover_csv_jobs(
         for path in select_code_paths(paths, codes):
             jobs.append(("adj_factor", path, PARQUET_ADJ_FACTOR_ROOT / f"{path.stem}.parquet"))
 
+    if "daily_basic" in selected_tables:
+        paths = sorted(DAILY_BASIC_ROOT.glob("*.csv"))
+        for path in select_code_paths(paths, codes):
+            jobs.append(("daily_basic", path, PARQUET_DAILY_BASIC_ROOT / f"{path.stem}.parquet"))
+
     if "minute" in selected_tables:
         for frequency in frequencies:
             for adjust_type in adjust_types:
@@ -221,6 +229,7 @@ SCHEMA_COLUMNS = {
     "trade_calendar": TRADE_CALENDAR_COLUMNS,
     "daily": DAILY_PRICE_COLUMNS,
     "adj_factor": ADJ_FACTOR_COLUMNS,
+    "daily_basic": DAILY_BASIC_COLUMNS,
     "minute": MINUTE_BAR_COLUMNS,
 }
 
@@ -265,9 +274,9 @@ def read_csv_for_table(table: str, path: Path):
     pd = import_pandas()
     schema_name = schema_name_for_job(table, path)
     dtype = {}
-    if schema_name in {"stock_basic", "daily", "adj_factor", "minute"}:
+    if schema_name in {"stock_basic", "daily", "adj_factor", "daily_basic", "minute"}:
         dtype["code"] = str
-    if schema_name in {"daily", "adj_factor", "minute"}:
+    if schema_name in {"daily", "adj_factor", "daily_basic", "minute"}:
         dtype["trade_date"] = str
     if schema_name == "minute":
         dtype["bar_end_time"] = str
@@ -301,6 +310,24 @@ def normalize_frame(schema_name: str, frame):
     numeric_columns_by_table = {
         "daily": ["open", "high", "low", "close", "pre_close", "change", "pct_chg", "volume", "amount"],
         "adj_factor": ["adjust_factor"],
+        "daily_basic": [
+            "close",
+            "turnover_rate",
+            "turnover_rate_free_float",
+            "volume_ratio",
+            "pe",
+            "pe_ttm",
+            "pb",
+            "ps",
+            "ps_ttm",
+            "dividend_yield",
+            "dividend_yield_ttm",
+            "total_shares",
+            "float_shares",
+            "free_float_shares",
+            "total_market_value",
+            "float_market_value",
+        ],
         "minute": ["open", "high", "low", "close", "volume", "amount"],
     }
     for column in numeric_columns_by_table.get(schema_name, []):

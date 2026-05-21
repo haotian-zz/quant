@@ -48,6 +48,7 @@ a_share_db/data/
 │   │   ├── none/
 │   │   ├── qfq/
 │   │   └── hfq/
+│   ├── daily_basic/
 │   ├── minute/
 │   │   └── {frequency}/
 │   │       ├── none/
@@ -57,6 +58,7 @@ a_share_db/data/
 ├── parquet/
 │   ├── metadata/
 │   ├── daily/
+│   ├── daily_basic/
 │   ├── minute/
 │   └── adj_factor/
 ├── raw/
@@ -74,6 +76,7 @@ The first Parquet builder mirrors the CSV layout: one formal CSV file becomes on
 
 ```text
 market_data/daily/none/600519.csv -> parquet/daily/none/600519.parquet
+market_data/daily_basic/600519.csv -> parquet/daily_basic/600519.parquet
 market_data/minute/1m/none/600519.csv -> parquet/minute/1m/none/600519.parquet
 ```
 
@@ -83,7 +86,8 @@ market_data/minute/1m/none/600519.csv -> parquet/minute/1m/none/600519.parquet
 2. Build trade calendar.
 3. Fetch unadjusted daily prices.
 4. Fetch adjustment factors.
-5. Build qfq/hfq daily prices locally.
+5. Fetch daily basic indicators.
+6. Build qfq/hfq daily prices locally.
 
 ```bash
 python3 a_share_db/scripts/metadata/fetch_stock_basic.py --statuses L D P G
@@ -104,6 +108,16 @@ python3 a_share_db/scripts/market/fetch_daily.py \
   --retry-interval 5
 
 python3 a_share_db/scripts/market/fetch_adj_factor.py \
+  --all-stocks \
+  --start-date 19900101 \
+  --end-date 20260510 \
+  --resume \
+  --request-interval 0.13 \
+  --progress-every 50 \
+  --max-retries 3 \
+  --retry-interval 5
+
+python3 a_share_db/scripts/market/fetch_daily_basic.py \
   --all-stocks \
   --start-date 19900101 \
   --end-date 20260510 \
@@ -165,7 +179,7 @@ Build Parquet from existing CSV files:
 
 ```bash
 python3 a_share_db/scripts/warehouse/build_parquet.py \
-  --tables metadata daily adj_factor \
+  --tables metadata daily adj_factor daily_basic \
   --resume \
   --progress-every 100
 ```
@@ -390,6 +404,58 @@ import os
 from a_share_db.scripts.market.fetch_adj_factor import run_adj_factor_etl
 
 result = run_adj_factor_etl(
+    token=os.environ["TUSHARE_TOKEN"],
+    codes=["600519"],
+    start_date="20260101",
+    end_date="20260131",
+    dry_run=True,
+)
+print(result["row_count"])
+```
+
+### `scripts/market/fetch_daily_basic.py`
+
+Fetches Tushare `daily_basic` and writes local daily indicators by stock:
+
+```text
+a_share_db/data/market_data/daily_basic/{code}.csv
+```
+
+Formal output uses local fields and units. Tushare share counts are converted from `万股` to `股`; market values are converted from `万元` to `元`.
+
+When both `--start-date` and `--end-date` are provided, the script automatically splits long history into request windows to stay below the provider row limit, then merges by `code + trade_date`.
+
+Single-stock smoke test:
+
+```bash
+python3 a_share_db/scripts/market/fetch_daily_basic.py \
+  --codes 600519 \
+  --start-date 20260101 \
+  --end-date 20260131 \
+  --dry-run
+```
+
+Fetch full history:
+
+```bash
+python3 a_share_db/scripts/market/fetch_daily_basic.py \
+  --all-stocks \
+  --start-date 19900101 \
+  --end-date 20260510 \
+  --resume \
+  --request-interval 0.13 \
+  --progress-every 50 \
+  --max-retries 3 \
+  --retry-interval 5
+```
+
+Import example:
+
+```python
+import os
+from a_share_db.scripts.market.fetch_daily_basic import run_daily_basic_etl
+
+result = run_daily_basic_etl(
     token=os.environ["TUSHARE_TOKEN"],
     codes=["600519"],
     start_date="20260101",

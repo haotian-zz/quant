@@ -35,6 +35,7 @@ a_share_db/
 │   │   │   ├── none/
 │   │   │   ├── qfq/
 │   │   │   └── hfq/
+│   │   ├── daily_basic/
 │   │   ├── minute/
 │   │   │   └── {frequency}/
 │   │   │       ├── none/
@@ -47,6 +48,8 @@ a_share_db/
 │   │   ├── daily/
 │   │   │   └── {adjust_type}/
 │   │   │       └── {code}.parquet
+│   │   ├── daily_basic/
+│   │   │   └── {code}.parquet
 │   │   ├── minute/
 │   │   │   └── {frequency}/
 │   │   │       └── {adjust_type}/
@@ -58,6 +61,8 @@ a_share_db/
 │   │   ├── daily/
 │   │   │   └── {provider}/
 │   │   │       └── {adjust_type}/
+│   │   ├── daily_basic/
+│   │   │   └── {provider}/
 │   │   ├── minute/
 │   │   │   └── {provider}/
 │   │   │       └── {frequency}/
@@ -77,6 +82,7 @@ a_share_db/
 ├── constant/
 │   ├── stock_basic.py
 │   ├── daily.py
+│   ├── daily_basic.py
 │   ├── minute.py
 │   ├── trade_calendar.py
 │   ├── paths.py
@@ -136,7 +142,7 @@ Parquet 构建命令：
 ```bash
 # 构建 metadata、daily、adj_factor 的 Parquet 正式层。
 python3 a_share_db/scripts/warehouse/build_parquet.py \
-  --tables metadata daily adj_factor \
+  --tables metadata daily adj_factor daily_basic \
   --resume \
   --progress-every 100
 
@@ -588,7 +594,108 @@ data/raw/adj_factor/tushare/{code}.csv
 
 ---
 
-### 3.5 历史分钟行情表：`data/market_data/minute/{frequency}/{adjust_type}/{code}.csv`
+### 3.5 每日指标表：`data/market_data/daily_basic/{code}.csv`
+
+用途：保存单只股票每日估值、换手率、股本和市值等基础指标，作为选股、因子研究、容量约束和市值过滤的核心表。
+
+文件示例：
+
+```text
+data/market_data/daily_basic/600519.csv
+```
+
+| Field                      | 中文名       | 说明                         |
+|----------------------------|------------|------------------------------|
+| `code`                     | 股票代码      | 6 位股票代码                    |
+| `trade_date`               | 交易日期      | 格式：`YYYY-MM-DD`            |
+| `close`                    | 收盘价       | 当日收盘价                      |
+| `turnover_rate`            | 换手率       | 单位 `%`                      |
+| `turnover_rate_free_float` | 自由流通换手率  | 单位 `%`                      |
+| `volume_ratio`             | 量比         | 当日量比                        |
+| `pe`                       | 市盈率       | 静态 PE；亏损时可为空              |
+| `pe_ttm`                   | 滚动市盈率     | TTM PE；亏损时可为空              |
+| `pb`                       | 市净率       | PB                           |
+| `ps`                       | 市销率       | PS                           |
+| `ps_ttm`                   | 滚动市销率     | TTM PS                       |
+| `dividend_yield`           | 股息率       | 单位 `%`                      |
+| `dividend_yield_ttm`       | 滚动股息率     | 单位 `%`                      |
+| `total_shares`             | 总股本       | 单位：股；Tushare 万股 -> 股       |
+| `float_shares`             | 流通股本      | 单位：股；Tushare 万股 -> 股       |
+| `free_float_shares`        | 自由流通股本   | 单位：股；Tushare 万股 -> 股       |
+| `total_market_value`       | 总市值       | 单位：元；Tushare 万元 -> 元       |
+| `float_market_value`       | 流通市值      | 单位：元；Tushare 万元 -> 元       |
+| `update_time`              | 更新时间      | 格式：`YYYY-MM-DD HH:MM:SS`   |
+
+CSV 表头：
+
+```csv
+code,trade_date,close,turnover_rate,turnover_rate_free_float,volume_ratio,pe,pe_ttm,pb,ps,ps_ttm,dividend_yield,dividend_yield_ttm,total_shares,float_shares,free_float_shares,total_market_value,float_market_value,update_time
+```
+
+唯一键：
+
+```text
+code + trade_date
+```
+
+Tushare `daily_basic` 字段转换关系：
+
+| 正式表字段                  | Tushare daily_basic 原始字段 | 转换规则              |
+|---------------------------|------------------------------|----------------------|
+| `code`                    | `ts_code`                    | 去掉交易所后缀         |
+| `trade_date`              | `trade_date`                 | `YYYYMMDD` -> `YYYY-MM-DD` |
+| `close`                   | `close`                      | 原值                 |
+| `turnover_rate`           | `turnover_rate`              | 原值，单位 `%`        |
+| `turnover_rate_free_float` | `turnover_rate_f`           | 原值，单位 `%`        |
+| `volume_ratio`            | `volume_ratio`               | 原值                 |
+| `pe`                      | `pe`                         | 原值                 |
+| `pe_ttm`                  | `pe_ttm`                     | 原值                 |
+| `pb`                      | `pb`                         | 原值                 |
+| `ps`                      | `ps`                         | 原值                 |
+| `ps_ttm`                  | `ps_ttm`                     | 原值                 |
+| `dividend_yield`          | `dv_ratio`                   | 原值，单位 `%`        |
+| `dividend_yield_ttm`      | `dv_ttm`                     | 原值，单位 `%`        |
+| `total_shares`            | `total_share`                | 万股 -> 股，乘以 `10000` |
+| `float_shares`            | `float_share`                | 万股 -> 股，乘以 `10000` |
+| `free_float_shares`       | `free_share`                 | 万股 -> 股，乘以 `10000` |
+| `total_market_value`      | `total_mv`                   | 万元 -> 元，乘以 `10000` |
+| `float_market_value`      | `circ_mv`                    | 万元 -> 元，乘以 `10000` |
+
+原始每日指标如需保留，存放在：
+
+```text
+data/raw/daily_basic/tushare/{code}.csv
+```
+
+试跑建议：
+
+```bash
+python3 a_share_db/scripts/market/fetch_daily_basic.py \
+  --codes 600519 \
+  --start-date 20260101 \
+  --end-date 20260131 \
+  --dry-run
+```
+
+全市场历史数据建议使用断点续跑和限速：
+
+`daily_basic` 单次请求有行数上限，脚本会在同时传入 `--start-date` 和 `--end-date` 时自动按日期窗口分段请求，并按 `code + trade_date` 合并去重。
+
+```bash
+python3 a_share_db/scripts/market/fetch_daily_basic.py \
+  --all-stocks \
+  --start-date 19900101 \
+  --end-date 20260510 \
+  --resume \
+  --request-interval 0.13 \
+  --progress-every 50 \
+  --max-retries 3 \
+  --retry-interval 5
+```
+
+---
+
+### 3.6 历史分钟行情表：`data/market_data/minute/{frequency}/{adjust_type}/{code}.csv`
 
 用途：存储单只股票的历史分钟 K 线行情。Tushare `stk_mins` 是当前数据来源；另一张参考表提供了更清晰的“K线结束时间”语义，因此本地字段采用 `bar_end_time`。
 
@@ -691,7 +798,7 @@ data/raw/minute/tushare/{frequency}/{code}.csv
 
 ---
 
-### 3.6 ETL 日志表：`data/logs/etl_log.csv`
+### 3.7 ETL 日志表：`data/logs/etl_log.csv`
 
 用途：记录每次抓取任务的执行情况。
 
@@ -713,7 +820,7 @@ job_name,source,start_time,end_time,status,row_count,error_message
 
 ---
 
-### 3.7 更新状态表：`data/logs/update_status.csv`
+### 3.8 更新状态表：`data/logs/update_status.csv`
 
 用途：记录每只股票、每种复权类型已经更新到哪一天，用于增量更新。
 
@@ -944,6 +1051,7 @@ data/metadata/raw_tushare_trade_calendar.csv
 data/metadata/trade_calendar.csv
 data/market_data/daily/none/{code}.csv
 data/market_data/adj_factor/{code}.csv
+data/market_data/daily_basic/{code}.csv
 data/market_data/daily/qfq/{code}.csv
 data/market_data/daily/hfq/{code}.csv
 data/market_data/minute/{frequency}/none/{code}.csv
@@ -960,6 +1068,7 @@ P0: raw_tushare_trade_calendar.csv
 P0: trade_calendar.csv
 P0: none daily data
 P0: adj_factor data
+P0: daily_basic data
 P0: qfq daily data
 P0: hfq daily data
 P1: none minute data
