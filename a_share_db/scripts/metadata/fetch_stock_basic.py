@@ -32,10 +32,10 @@ from a_share_db.constant.paths import (
     ETL_LOG_PATH,
     RAW_TUSHARE_STOCK_BASIC_PATH,
     STOCK_BASIC_PATH,
+    build_data_backup_path,
 )
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT = STOCK_BASIC_PATH
 DEFAULT_RAW_OUTPUT = RAW_TUSHARE_STOCK_BASIC_PATH
 DEFAULT_LOG = ETL_LOG_PATH
@@ -248,16 +248,7 @@ def build_backup_timestamp() -> str:
 
 
 def build_backup_path(path: Path, backup_root: Path, backup_timestamp: str) -> Path:
-    path = Path(path)
-    try:
-        relative_path = path.resolve().relative_to(PROJECT_ROOT.resolve())
-    except ValueError:
-        # External paths are still backed up under backup_root without escaping it.
-        if path.is_absolute():
-            relative_path = Path("external").joinpath(*path.parts[1:])
-        else:
-            relative_path = path
-    return Path(backup_root) / backup_timestamp / relative_path
+    return build_data_backup_path(path, backup_root, backup_timestamp)
 
 
 def append_etl_log(

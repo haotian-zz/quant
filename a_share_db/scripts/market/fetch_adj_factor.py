@@ -28,13 +28,13 @@ from a_share_db.constant.paths import (
     ETL_LOG_PATH,
     RAW_TUSHARE_ADJ_FACTOR_ROOT,
     STOCK_BASIC_PATH,
+    build_data_backup_path,
 )
 from a_share_db.utils.progress import ProgressReporter
 from a_share_db.utils.provider_codes import build_tushare_ts_code
 
 
 # Defaults mirror the local data layout and keep CLI/import behavior aligned.
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_STOCK_BASIC = STOCK_BASIC_PATH
 DEFAULT_OUTPUT_ROOT = ADJ_FACTOR_ROOT
 DEFAULT_RAW_OUTPUT_ROOT = RAW_TUSHARE_ADJ_FACTOR_ROOT
@@ -351,16 +351,7 @@ def build_backup_timestamp() -> str:
 
 
 def build_backup_path(path: Path, backup_root: Path, backup_timestamp: str) -> Path:
-    path = Path(path)
-    try:
-        relative_path = path.resolve().relative_to(PROJECT_ROOT.resolve())
-    except ValueError:
-        # External output paths are still backed up under backup_root.
-        if path.is_absolute():
-            relative_path = Path("external").joinpath(*path.parts[1:])
-        else:
-            relative_path = path
-    return Path(backup_root) / backup_timestamp / relative_path
+    return build_data_backup_path(path, backup_root, backup_timestamp)
 
 
 def append_etl_log(

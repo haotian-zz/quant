@@ -28,12 +28,12 @@ from a_share_db.constant.paths import (
     DAILY_ROOT,
     ETL_LOG_PATH,
     STOCK_BASIC_PATH,
+    build_data_backup_path,
 )
 from a_share_db.utils.progress import ProgressReporter
 
 
 # Paths stay centralized so CLI calls and import calls use the same defaults.
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_STOCK_BASIC = STOCK_BASIC_PATH
 DEFAULT_NONE_ROOT = DAILY_NONE_ROOT
 DEFAULT_ADJ_FACTOR_ROOT = ADJ_FACTOR_ROOT
@@ -303,16 +303,7 @@ def build_backup_timestamp() -> str:
 
 
 def build_backup_path(path: Path, backup_root: Path, backup_timestamp: str) -> Path:
-    path = Path(path)
-    try:
-        relative_path = path.resolve().relative_to(PROJECT_ROOT.resolve())
-    except ValueError:
-        # External paths are still backed up inside backup_root.
-        if path.is_absolute():
-            relative_path = Path("external").joinpath(*path.parts[1:])
-        else:
-            relative_path = path
-    return Path(backup_root) / backup_timestamp / relative_path
+    return build_data_backup_path(path, backup_root, backup_timestamp)
 
 
 def append_etl_log(

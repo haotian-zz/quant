@@ -10,7 +10,13 @@ Current ETL scripts still fetch into CSV first. Parquet will become the formal a
 
 Formal tables use local domain fields only; provider-specific fields such as Tushare `ts_code` are converted inside ETL scripts and are not stored in formal tables.
 
-Local data is written under `a_share_db/data/`. This directory is ignored by git because it can become large and should be rebuilt or synced separately.
+Local data is written to the QuantDB volume by default:
+
+```text
+/Volumes/QuantDB/a_share_db/data/
+```
+
+The repository path `a_share_db/data` may be a symlink to that directory for compatibility with older commands. ETL scripts use `a_share_db.constant.paths.DATA_ROOT`, so default fetch, update, backup, log, Parquet, and warehouse paths stay on QuantDB. If the QuantDB volume is not mounted, scripts fail fast instead of recreating a large local data directory. Set `A_SHARE_DB_DATA_ROOT` only when intentionally overriding the data root.
 
 Long-running commands share `a_share_db.utils.progress.ProgressReporter` and expose `--progress-every` for progress and ETA output.
 

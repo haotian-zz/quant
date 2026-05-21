@@ -55,7 +55,6 @@ from a_share_db.utils.provider_codes import build_tushare_ts_code
 
 
 # Defaults point at formal local tables; raw roots are used only when --with-raw is set.
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_STOCK_BASIC = STOCK_BASIC_PATH
 DEFAULT_DAILY_ROOT = DAILY_NONE_ROOT
 DEFAULT_ADJ_FACTOR_ROOT = ADJ_FACTOR_ROOT

@@ -1,4 +1,6 @@
 a_share_db/data/
+a_share_db/data
+a_share_db/data.local_before_quantdb_*/
 .idea
 __pycache__/
 *.py[cod]
