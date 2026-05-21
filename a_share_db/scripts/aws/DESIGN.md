@@ -2,8 +2,8 @@
 
 ## Goal
 
-Back up the entire local `a_share_db/data` directory to S3 as timestamped snapshots.
-The backup command is intended to run periodically after local data updates.
+Back up the configured local data root to S3 as timestamped snapshots. The backup
+command is intended to run periodically after local data updates.
 
 ## Snapshot Layout
 
@@ -16,7 +16,7 @@ s3://{bucket}/{prefix}/{YYYYMMDDTHHMMSSZ}/...
 Default values:
 
 ```text
-source root: a_share_db/data
+source root: /Volumes/QuantDB/a_share_db/data
 prefix:      quant/a_share_db/data_backups
 retention:   10 snapshots
 storage:     GLACIER
@@ -30,7 +30,7 @@ quant/a_share_db/data_backups/20260512T061530Z/market_data/daily/none/600519.csv
 quant/a_share_db/data_backups/20260512T061530Z/logs/etl_log.csv
 ```
 
-The relative path below `a_share_db/data` is preserved in S3.
+The relative path below the configured source root is preserved in S3.
 
 ## Retention
 

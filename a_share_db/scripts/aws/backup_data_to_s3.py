@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Back up a_share_db/data to timestamped S3 snapshots."""
+"""Back up the configured local data root to timestamped S3 snapshots."""
 
 from __future__ import annotations
 
 import argparse
 import os
-import re
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -17,26 +16,18 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[3]
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
+from a_share_db.constant.aws import (
+    DEFAULT_KEEP_BACKUPS,
+    DEFAULT_S3_BACKUP_PREFIX,
+    DEFAULT_S3_STORAGE_CLASS,
+    S3_BACKUP_BUCKET_ENV,
+    S3_DELETE_BATCH_SIZE,
+    SUPPORTED_S3_STORAGE_CLASSES,
+    TIMESTAMP_FORMAT,
+    TIMESTAMP_RE,
+)
 from a_share_db.constant.paths import DATA_ROOT
 from a_share_db.utils.progress import ProgressReporter
-
-
-DEFAULT_S3_BACKUP_PREFIX = "quant/a_share_db/data_backups"
-DEFAULT_KEEP_BACKUPS = 10
-DEFAULT_STORAGE_CLASS = "GLACIER"
-TIMESTAMP_FORMAT = "%Y%m%dT%H%M%SZ"
-TIMESTAMP_RE = re.compile(r"^\d{8}T\d{6}Z$")
-S3_DELETE_BATCH_SIZE = 1000
-
-SUPPORTED_STORAGE_CLASSES = {
-    "STANDARD",
-    "STANDARD_IA",
-    "ONEZONE_IA",
-    "INTELLIGENT_TIERING",
-    "GLACIER_IR",
-    "GLACIER",
-    "DEEP_ARCHIVE",
-}
 
 
 @dataclass(frozen=True)
@@ -213,7 +204,7 @@ def run_s3_data_backup(
     source_root: Path = DATA_ROOT,
     prefix: str = DEFAULT_S3_BACKUP_PREFIX,
     keep_backups: int = DEFAULT_KEEP_BACKUPS,
-    storage_class: str = DEFAULT_STORAGE_CLASS,
+    storage_class: str = DEFAULT_S3_STORAGE_CLASS,
     timestamp: str | None = None,
     profile: str | None = None,
     region: str | None = None,
@@ -225,8 +216,8 @@ def run_s3_data_backup(
         raise ValueError("--keep-backups must be at least 1")
 
     storage_class = storage_class.upper()
-    if storage_class not in SUPPORTED_STORAGE_CLASSES:
-        allowed = ", ".join(sorted(SUPPORTED_STORAGE_CLASSES))
+    if storage_class not in SUPPORTED_S3_STORAGE_CLASSES:
+        allowed = ", ".join(sorted(SUPPORTED_S3_STORAGE_CLASSES))
         raise ValueError(f"Unsupported storage class: {storage_class}. Allowed: {allowed}")
 
     if timestamp is not None and not TIMESTAMP_RE.match(timestamp):
@@ -295,12 +286,12 @@ def run_s3_data_backup(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Upload a_share_db/data to S3 as a timestamped backup snapshot."
+        description="Upload the configured local data root to S3 as a timestamped backup snapshot."
     )
     parser.add_argument(
         "--bucket",
-        default=os.getenv("A_SHARE_DB_S3_BACKUP_BUCKET"),
-        help="Target S3 bucket. Defaults to env var A_SHARE_DB_S3_BACKUP_BUCKET.",
+        default=os.getenv(S3_BACKUP_BUCKET_ENV),
+        help=f"Target S3 bucket. Defaults to env var {S3_BACKUP_BUCKET_ENV}.",
     )
     parser.add_argument(
         "--prefix",
@@ -321,8 +312,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--storage-class",
-        default=DEFAULT_STORAGE_CLASS,
-        help=f"S3 storage class for uploaded objects. Default: {DEFAULT_STORAGE_CLASS}.",
+        default=DEFAULT_S3_STORAGE_CLASS,
+        help=f"S3 storage class for uploaded objects. Default: {DEFAULT_S3_STORAGE_CLASS}.",
     )
     parser.add_argument(
         "--timestamp",
@@ -359,7 +350,7 @@ def main() -> int:
     args = parse_args()
     if not args.bucket:
         print(
-            "S3 bucket is required. Pass --bucket or set A_SHARE_DB_S3_BACKUP_BUCKET.",
+            f"S3 bucket is required. Pass --bucket or set {S3_BACKUP_BUCKET_ENV}.",
             file=sys.stderr,
         )
         return 2

@@ -17,9 +17,14 @@ The default backup target is:
 s3://quant-922593397137-us-east-1-an/quant/a_share_db/data_backups/{YYYYMMDDTHHMMSSZ}/...
 ```
 
-The script uploads `a_share_db/data`, keeps the newest 10 timestamped backups by
-default, and deletes the oldest backup before uploading a new one when there are
-already 10 backups.
+The script uploads the configured local data root. By default this is:
+
+```text
+/Volumes/QuantDB/a_share_db/data
+```
+
+It keeps the newest 10 timestamped backups by default, and deletes the oldest
+backup before uploading a new one when there are already 10 backups.
 
 ## Credential Model
 
@@ -255,7 +260,7 @@ preserving the production path shape, stage it in `/tmp`:
 
 ```bash
 mkdir -p /tmp/a_share_db_s3_test/metadata
-cp /Users/r/workplace/quant/a_share_db/data/metadata/trade_calendar.csv \
+cp /Volumes/QuantDB/a_share_db/data/metadata/trade_calendar.csv \
   /tmp/a_share_db_s3_test/metadata/
 
 python3 a_share_db/scripts/aws/backup_data_to_s3.py \
