@@ -104,17 +104,19 @@ def build_steps(args: argparse.Namespace) -> list[tuple[str, str, callable]]:
         for table in MACRO_TABLES
     ]
 
-    # Benchmarks, universes and industry indices.
+    # Benchmarks, universes and industry indices. Per-index files have no
+    # incremental path yet, so update mode re-fetches them in full.
+    index_loop = {**loop, "resume": loop["resume"] and not args.update}
     steps += [
-        ("index", f"index_{table}", (lambda table=table: run_index_table_etl(table, token, end_date=end_date, **loop)))
+        ("index", f"index_{table}", (lambda table=table: run_index_table_etl(table, token, end_date=end_date, **index_loop)))
         for table in INDEX_TABLES
     ]
-    steps.append(("index", "index_weight", lambda: run_index_weight_etl(token, end_date=end_date, **loop)))
+    steps.append(("index", "index_weight", lambda: run_index_weight_etl(token, end_date=end_date, **index_loop)))
     steps.append(
         (
             "index",
             "sw_industry_daily",
-            lambda: run_sw_industry_daily_etl(token, load_industry_codes(SW_INDUSTRY_PATH, ["L1", "L2", "L3"]), end_date=end_date, **loop),
+            lambda: run_sw_industry_daily_etl(token, load_industry_codes(SW_INDUSTRY_PATH, ["L1", "L2", "L3"]), end_date=end_date, **index_loop),
         )
     )
 
