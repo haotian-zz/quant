@@ -98,6 +98,8 @@ def run_sw_industry_daily_etl(
     raw_output_root: Path = DEFAULT_RAW_OUTPUT_ROOT,
     **kwargs,
 ) -> dict:
+    start_date = start_date or DEFAULT_SW_DAILY_START_DATE
+
     def fetch_fn(pro, index_code: str):
         return fetch_paginated(pro, "sw_daily", TUSHARE_SW_DAILY_FIELDS, page_size=SW_DAILY_PAGE_SIZE, ts_code=index_code, start_date=start_date, end_date=end_date)
 

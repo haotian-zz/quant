@@ -99,6 +99,8 @@ def run_index_weight_etl(
     raw_output_root: Path = DEFAULT_RAW_OUTPUT_ROOT,
     **kwargs,
 ) -> dict:
+    # Unbounded index_weight queries fail for wide indices; importers get the coverage start.
+    start_date = start_date or DEFAULT_INDEX_WEIGHT_START_DATE
     return run_per_key_etl(
         "fetch_index_weight",
         token,
