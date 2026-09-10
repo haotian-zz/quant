@@ -71,7 +71,9 @@ def convert_tushare_suspend(raw):
     )
 
 
-def run_suspend_etl(token: str, output_root: Path = DEFAULT_OUTPUT_ROOT, raw_output_root: Path = DEFAULT_RAW_OUTPUT_ROOT, **kwargs) -> dict:
+def run_suspend_etl(token: str, output_root: Path = DEFAULT_OUTPUT_ROOT, raw_output_root: Path = DEFAULT_RAW_OUTPUT_ROOT, start_date: str | None = None, **kwargs) -> dict:
+    # Importers may omit the start date; fall back to the provider coverage start.
+    kwargs["start_date"] = start_date or DEFAULT_SUSPEND_START_DATE
     return run_per_date_etl(
         "fetch_suspend",
         token,

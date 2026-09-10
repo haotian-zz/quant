@@ -68,7 +68,9 @@ def convert_tushare_st_stock(raw):
     )
 
 
-def run_st_stock_etl(token: str, output_root: Path = DEFAULT_OUTPUT_ROOT, raw_output_root: Path = DEFAULT_RAW_OUTPUT_ROOT, **kwargs) -> dict:
+def run_st_stock_etl(token: str, output_root: Path = DEFAULT_OUTPUT_ROOT, raw_output_root: Path = DEFAULT_RAW_OUTPUT_ROOT, start_date: str | None = None, **kwargs) -> dict:
+    # Importers may omit the start date; fall back to the provider coverage start.
+    kwargs["start_date"] = start_date or DEFAULT_ST_STOCK_START_DATE
     return run_per_date_etl(
         "fetch_st_stock",
         token,
