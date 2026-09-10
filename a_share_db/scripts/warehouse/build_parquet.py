@@ -42,7 +42,12 @@ from a_share_db.constant.paths import (
 )
 from a_share_db.constant.stock_basic import STOCK_BASIC_COLUMNS
 from a_share_db.constant.trade_calendar import TRADE_CALENDAR_COLUMNS
-from a_share_db.constant.warehouse import PARQUET_ALL_TABLES, PARQUET_TABLES
+from a_share_db.constant.warehouse import (
+    EXTENDED_PARQUET_TABLES,
+    PARQUET_ALL_TABLES,
+    PARQUET_TABLE_GROUPS,
+    PARQUET_TABLES,
+)
 from a_share_db.scripts.market.fetch_daily import load_requested_codes
 from a_share_db.utils.progress import ProgressReporter
 
@@ -60,9 +65,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--tables",
         nargs="+",
-        choices=PARQUET_TABLES + PARQUET_ALL_TABLES,
+        choices=PARQUET_TABLES + PARQUET_ALL_TABLES + list(EXTENDED_PARQUET_TABLES) + list(PARQUET_TABLE_GROUPS),
         default=["metadata", "daily", "adj_factor", "daily_basic"],
-        help="Tables to build. Default: metadata daily adj_factor daily_basic. Use all to include minute.",
+        help=(
+            "Tables to build. Default: metadata daily adj_factor daily_basic. "
+            "Use all to include minute; extended/financial/macro expand to the second-generation table groups."
+        ),
     )
     parser.add_argument(
         "--codes",
@@ -152,10 +160,15 @@ def ensure_parquet_engine() -> None:
 
 
 def normalize_tables(tables: Iterable[str]) -> list[str]:
-    values = list(tables)
-    if "all" in values:
-        # all is a local shortcut, not a table name.
-        return PARQUET_TABLES.copy()
+    values = []
+    for value in tables:
+        # all/extended/financial/macro are local shortcuts, not table names.
+        if value == "all":
+            values.extend(PARQUET_TABLES + list(EXTENDED_PARQUET_TABLES))
+        elif value in PARQUET_TABLE_GROUPS:
+            values.extend(PARQUET_TABLE_GROUPS[value])
+        else:
+            values.append(value)
     normalized = []
     seen = set()
     for value in values:
@@ -221,6 +234,20 @@ def discover_csv_jobs(
                 for path in select_code_paths(paths, codes):
                     jobs.append(("minute", path, output_root / f"{path.stem}.parquet"))
 
+    for table, spec in EXTENDED_PARQUET_TABLES.items():
+        if table not in selected_tables:
+            continue
+        if spec["layout"] == "file":
+            if Path(spec["csv"]).exists():
+                jobs.append((table, Path(spec["csv"]), Path(spec["parquet"])))
+            continue
+        # Directory layouts hold one CSV per stock, index, period or year.
+        paths = sorted(Path(spec["csv"]).glob("*.csv"))
+        if spec["key"] == "code":
+            paths = select_code_paths(paths, codes)
+        for path in paths:
+            jobs.append((table, path, Path(spec["parquet"]) / f"{path.stem}.parquet"))
+
     return jobs
 
 
@@ -231,6 +258,7 @@ SCHEMA_COLUMNS = {
     "adj_factor": ADJ_FACTOR_COLUMNS,
     "daily_basic": DAILY_BASIC_COLUMNS,
     "minute": MINUTE_BAR_COLUMNS,
+    **{table: spec["columns"] for table, spec in EXTENDED_PARQUET_TABLES.items()},
 }
 
 PROVIDER_ONLY_COLUMNS = {
@@ -286,14 +314,32 @@ def read_csv_for_table(table: str, path: Path):
     if schema_name == "stock_basic":
         dtype["list_date"] = str
         dtype["delist_date"] = str
+    if schema_name in EXTENDED_PARQUET_TABLES:
+        spec = EXTENDED_PARQUET_TABLES[schema_name]
+        dtype.update({column: str for column in spec["text_columns"] | spec["date_columns"]})
     # Read code/date columns as strings first so normalization is explicit.
     frame = pd.read_csv(path, dtype=dtype).fillna("")
     frame = validate_and_order_columns(frame, schema_name, path)
     return normalize_frame(schema_name, frame)
 
 
+def normalize_extended_frame(spec: dict, frame):
+    """Type an extended table: text and date columns as declared, the rest numeric."""
+    pd = import_pandas()
+    if "code" in frame.columns:
+        frame["code"] = frame["code"].astype(str).str.split(".").str[0].str.zfill(6)
+    for column in frame.columns:
+        if column in spec["date_columns"]:
+            frame[column] = pd.to_datetime(frame[column], errors="coerce").dt.date
+        elif column not in spec["text_columns"]:
+            frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    return frame
+
+
 def normalize_frame(schema_name: str, frame):
     pd = import_pandas()
+    if schema_name in EXTENDED_PARQUET_TABLES:
+        return normalize_extended_frame(EXTENDED_PARQUET_TABLES[schema_name], frame)
     if "code" in frame.columns:
         # Formal Parquet keeps local six-digit stock codes.
         frame["code"] = frame["code"].astype(str).str.split(".").str[0].str.zfill(6)

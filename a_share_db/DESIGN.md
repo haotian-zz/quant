@@ -80,35 +80,65 @@ a_share_db/
 │       └── update_status.csv
 │
 ├── constant/
-│   ├── stock_basic.py
-│   ├── daily.py
-│   ├── daily_basic.py
-│   ├── minute.py
-│   ├── trade_calendar.py
+│   ├── stock_basic.py / daily.py / daily_basic.py / minute.py / trade_calendar.py
+│   ├── limit_price.py / suspend.py / st_stock.py / name_change.py / stock_company.py / ipo.py
+│   ├── stock_connect.py / moneyflow.py / margin.py / index.py / industry.py / events.py
+│   ├── holders.py / financial.py / macro.py
 │   ├── paths.py
 │   ├── warehouse.py
 │   └── commands.py
 │
 ├── utils/
 │   ├── progress.py
-│   └── provider_codes.py
+│   ├── provider_codes.py
+│   ├── etl_common.py       # 分页、字段映射转换、原子写、日志、股票选择
+│   ├── etl_runners.py      # per-stock / per-date / per-key / single-table 通用循环
+│   └── cli.py              # 通用命令行参数
 │
 └── scripts/
     ├── metadata/
-    │   ├── fetch_stock_basic.py
-    │   ├── fetch_trade_calendar.py
-    │   └── refresh_metadata.py
+    │   ├── fetch_stock_basic.py / fetch_trade_calendar.py / refresh_metadata.py
+    │   ├── fetch_name_change.py / fetch_stock_company.py / fetch_ipo.py
+    │   └── fetch_stock_connect_constituent.py
     ├── market/
-    │   ├── fetch_adj_factor.py
-    │   ├── fetch_daily.py
-    │   ├── fetch_minute.py
-    │   ├── build_adjusted_daily.py
-    │   └── update_daily.py
+    │   ├── fetch_adj_factor.py / fetch_daily.py / fetch_minute.py / fetch_daily_basic.py
+    │   ├── build_adjusted_daily.py / update_daily.py
+    │   ├── fetch_limit_price.py / fetch_moneyflow.py / fetch_margin.py / fetch_stock_connect_hold.py
+    │   ├── fetch_suspend.py / fetch_st_stock.py / fetch_market_events.py
+    │   └── fetch_stock_connect_flow.py
+    ├── index/
+    │   ├── fetch_index_basic.py / fetch_index_daily.py / fetch_index_weight.py
+    │   └── fetch_sw_industry.py / fetch_sw_industry_daily.py
+    ├── financial/
+    │   ├── fetch_financial_statements.py / fetch_dividend.py
+    │   └── fetch_holder_number.py / fetch_top10_holders.py
+    ├── macro/
+    │   └── fetch_macro.py
     ├── workflows/
     │   ├── update_daily_data.py
-    │   └── rebuild_adjusted_daily_data.py
+    │   ├── rebuild_adjusted_daily_data.py
+    │   └── build_extended_history.py
     └── warehouse/
         └── build_parquet.py
+```
+
+第二代数据目录（同样位于 `data/` 下）：
+
+```text
+data/
+├── metadata/        stock_name_history.csv, stock_company.csv, ipo.csv, stock_connect_constituent.csv,
+│                    index_basic.csv, sw_industry.csv, sw_industry_member.csv
+├── market_data/     limit_price/{code}.csv, moneyflow/{code}.csv, margin/{code}.csv, stock_connect_hold/{code}.csv,
+│                    suspend/{year}.csv, st_stock/{year}.csv, dragon_tiger_list/{year}.csv, dragon_tiger_inst/{year}.csv,
+│                    block_trade/{year}.csv, limit_list/{year}.csv,
+│                    index_daily/{index_code}.csv, index_daily_basic/{index_code}.csv, index_weight/{index_code}.csv,
+│                    sw_industry_daily/{industry_index_code}.csv, margin_summary.csv, stock_connect_flow.csv
+├── financial/       income/{period}.csv, balance_sheet/{period}.csv, cash_flow/{period}.csv, indicator/{period}.csv,
+│                    forecast/{period}.csv, express/{period}.csv, disclosure_date/{period}.csv,
+│                    top10_holders/{period}.csv, top10_float_holders/{period}.csv,
+│                    dividend/{code}.csv, holder_number/{code}.csv
+├── macro/           shibor.csv, gdp.csv, cpi.csv, ppi.csv, money_supply.csv
+└── raw/tushare/     可选的第三方原始行（--with-raw）
 ```
 
 ---
@@ -847,6 +877,131 @@ code + adjust_type
 
 ---
 
+### 3.9 第二代表通用规则
+
+四种落地布局：
+
+| 布局 | 文件 | 断点续跑规则 | 适用 |
+| ---- | ---- | ------------ | ---- |
+| per-stock | `{table}/{code}.csv` | 跳过已存在且非空的股票文件 | 涨跌停价、资金流向、融资融券、北向持股、分红、股东户数 |
+| per-date | `{table}/{year}.csv` | 跳过已完成的年份文件；区间最后一年总是重拉 | 停复牌、ST 名单、龙虎榜、大宗交易、涨跌停统计 |
+| per-key | `{table}/{key}.csv` | 跳过已存在的 key 文件；财报周期在 `--refresh-recent-days`（默认 400 天）内总是重拉 | 指数日线/估值/权重、行业指数、财务报表（key = 报告期） |
+| single | `{table}.csv` | 无（全表重建） | 元数据、宏观、汇总表 |
+
+通用约定：
+
+```text
+所有表的 code 为 6 位股票代码；指数/行业指数使用 Wind 风格带后缀代码（000300.SH、801010.SI），因为纯 6 位代码在不同发布机构之间不唯一。
+日期统一 YYYY-MM-DD；股数单位股；金额单位元；比率单位 %。
+Tushare 单位换算：手 -> 股 ×100；万股 -> 股 ×10000；千元/万元/百万元/亿元 -> 元。
+每行带 update_time。
+Tushare 接口普遍支持 offset/limit 分页，fetch_paginated 按接口上限分页，不再依赖日期窗口。
+```
+
+### 3.10 交易约束表
+
+| 表 | 文件 | 唯一键 | 来源 | 字段 |
+| -- | ---- | ------ | ---- | ---- |
+| 涨跌停价 | `market_data/limit_price/{code}.csv` | code + trade_date | `stk_limit`（2007 起） | code, trade_date, limit_up_price, limit_down_price |
+| 停复牌 | `market_data/suspend/{year}.csv` | code + trade_date + suspend_type | `suspend_d` 按交易日（1999-05-28 起） | code, trade_date, suspend_timing, suspend_type(`suspend`/`resume`) |
+| ST 名单 | `market_data/st_stock/{year}.csv` | code + trade_date | `stock_st` 按交易日（2005 起） | code, name, trade_date, st_type, st_type_name |
+| 涨跌停统计 | `market_data/limit_list/{year}.csv` | code + trade_date | `limit_list_d`（2020 起） | 见 `constant/events.py`，limit_type 为 `limit_up`/`limit_down`/`touched` |
+
+`suspend_d` 按股票查询会被截断，所以按交易日抓取；2005 年之前的 ST 状态可从 `stock_name_history` 中名称含 `ST` 推断。
+
+### 3.11 资金与持仓表
+
+| 表 | 文件 | 唯一键 | 来源 | 说明 |
+| -- | ---- | ------ | ---- | ---- |
+| 个股资金流向 | `market_data/moneyflow/{code}.csv` | code + trade_date | `moneyflow`（2010 起） | 小/中/大/特大单买卖量额与净额；量 股，额 元 |
+| 融资融券明细 | `market_data/margin/{code}.csv` | code + trade_date | `margin_detail`（2010 起） | financing_* 融资，lending_* 融券；余额/金额 元，量 股 |
+| 融资融券汇总 | `market_data/margin_summary.csv` | exchange + trade_date | `margin` | SSE/SZSE/BSE 合计 |
+| 北向持股 | `market_data/stock_connect_hold/{code}.csv` | code + trade_date | `hk_hold`（2016 起） | hold_shares 股，hold_ratio %，connect_market SSE/SZSE |
+| 南北向资金 | `market_data/stock_connect_flow.csv` | trade_date | `moneyflow_hsgt`（2014 起） | 百万元 -> 元 |
+| 龙虎榜 | `market_data/dragon_tiger_list/{year}.csv` | code + trade_date + reason | `top_list`（2010 起） | 上榜原因、买卖金额 |
+| 龙虎榜席位 | `market_data/dragon_tiger_inst/{year}.csv` | code + trade_date + seat_name + side | `top_inst` | 席位买卖 |
+| 大宗交易 | `market_data/block_trade/{year}.csv` | code + trade_date + buyer + seller + price | `block_trade`（2010 起） | 万股 -> 股，万元 -> 元 |
+
+### 3.12 元数据扩展表
+
+| 表 | 文件 | 唯一键 | 来源 |
+| -- | ---- | ------ | ---- |
+| 股票曾用名 | `metadata/stock_name_history.csv` | code + start_date | `namechange` 全市场分页 |
+| 上市公司资料 | `metadata/stock_company.csv` | code | `stock_company` 按交易所；registered_capital 万元 -> 元 |
+| IPO | `metadata/ipo.csv` | code | `new_share`（2008 起）；万股 -> 股，亿元 -> 元 |
+| 沪深港通成分 | `metadata/stock_connect_constituent.csv` | code + connect_market + in_date | `hs_const` SH/SZ × 当前/历史 |
+| 指数基础信息 | `metadata/index_basic.csv` | index_code | `index_basic` SSE/SZSE/CSI/SW |
+| 申万行业分类 | `metadata/sw_industry.csv` | industry_index_code | `index_classify` SW2021 L1/L2/L3 |
+| 申万行业成分 | `metadata/sw_industry_member.csv` | code + l3_code + in_date | `index_member_all` 按 L1 分页；含 in_date/out_date 可做时点行业 |
+
+### 3.13 指数与行业行情表
+
+| 表 | 文件 | 唯一键 | 来源 |
+| -- | ---- | ------ | ---- |
+| 指数日线 | `market_data/index_daily/{index_code}.csv` | index_code + trade_date | `index_daily`；手 -> 股，千元 -> 元 |
+| 指数估值 | `market_data/index_daily_basic/{index_code}.csv` | index_code + trade_date | `index_dailybasic`（2004 起）；万元/万股 -> 元/股 |
+| 指数权重 | `market_data/index_weight/{index_code}.csv` | index_code + code + trade_date | `index_weight`（2005 起，按月）；按年窗口 + 分页 |
+| 申万行业指数日线 | `market_data/sw_industry_daily/{industry_index_code}.csv` | industry_index_code + trade_date | `sw_daily`（2012 起）；万股/万元 -> 股/元 |
+
+默认基准指数与权重指数列表在 `constant/index.py`（上证综指、上证50、沪深300、中证500/800/1000/2000/全指、科创50、深证成指、创业板指、国证2000、北证50 等）。
+
+### 3.14 财务数据表
+
+财务报表按报告期落地：`financial/{table}/{period}.csv`，period 为 `YYYYMMDD` 季末日期。所有表带 `announce_date`（首次公告日）以支持 point-in-time 使用，三大报表另带 `actual_announce_date`（实际公告日，含更正）。
+
+| 表 | 文件 | 唯一键 | 来源 |
+| -- | ---- | ------ | ---- |
+| 利润表 | `financial/income/{period}.csv` | code + report_period + statement_type + actual_announce_date | `income_vip` |
+| 资产负债表 | `financial/balance_sheet/{period}.csv` | 同上 | `balancesheet_vip` |
+| 现金流量表 | `financial/cash_flow/{period}.csv` | 同上 | `cashflow_vip` |
+| 财务指标 | `financial/indicator/{period}.csv` | code + report_period + announce_date | `fina_indicator_vip` |
+| 业绩预告 | `financial/forecast/{period}.csv` | code + report_period + announce_date + forecast_type | `forecast_vip` |
+| 业绩快报 | `financial/express/{period}.csv` | code + report_period + announce_date | `express_vip` |
+| 财报披露日期 | `financial/disclosure_date/{period}.csv` | code + report_period | `disclosure_date` |
+| 前十大股东 | `financial/top10_holders/{period}.csv` | code + report_period + announce_date + holder_name | `top10_holders` |
+| 前十大流通股东 | `financial/top10_float_holders/{period}.csv` | 同上 | `top10_floatholders` |
+| 分红送股 | `financial/dividend/{code}.csv` | code + report_period + announce_date + process | `dividend`；base_shares 万股 -> 股 |
+| 股东户数 | `financial/holder_number/{code}.csv` | code + report_period + announce_date | `stk_holdernumber` |
+
+约定：
+
+```text
+statement_type 默认只抓 consolidated（Tushare report_type=1，合并报表）；可用 --report-types 扩展。
+company_type：general / bank / insurance / securities。
+Tushare vip 接口会重复返回同一份报表，转换时按唯一键去重并优先保留 is_update=1 的行。
+三大报表与财务指标共约 450 个字段，本地字段名的映射见 constant/financial.py，不在此逐一列出。
+```
+
+### 3.15 宏观表
+
+| 表 | 文件 | 唯一键 | 来源 |
+| -- | ---- | ------ | ---- |
+| Shibor | `macro/shibor.csv` | rate_date | `shibor`（2006 起，按 5 年窗口分页） |
+| GDP | `macro/gdp.csv` | quarter | `cn_gdp` |
+| CPI | `macro/cpi.csv` | month | `cn_cpi` |
+| PPI | `macro/ppi.csv` | month | `cn_ppi` |
+| 货币供应量 | `macro/money_supply.csv` | month | `cn_m` |
+
+### 3.16 第二代表的构建与增量
+
+```text
+全量构建：python3 a_share_db/scripts/workflows/build_extended_history.py
+按组构建：--groups metadata index financial stock daily
+单表重建：调用对应 scripts/*/fetch_*.py，加 --resume 可续跑
+Parquet：python3 a_share_db/scripts/warehouse/build_parquet.py --tables extended --resume
+```
+
+增量更新策略（后续实现）：
+
+```text
+per-date 表：从本地最大年份文件重拉当年即可（同 --resume 行为）。
+per-key 财务表：--resume 会自动重拉最近 400 天内结束的报告期。
+per-stock 表：与 update_daily 相同，按本地最大 trade_date+1 增量；当前先用 --resume 全量补齐。
+single 表：直接重跑全表。
+```
+
+---
+
 ## 4. 代码格式规范
 
 固定常量管理：
@@ -866,8 +1021,31 @@ scripts/ 下的 ETL 脚本只能引用这些常量，不在脚本内部重复定
 | `constant/minute.py`        | 分钟行情字段、分钟频率、provider 频率映射 |
 | `constant/trade_calendar.py` | 交易日历字段、Tushare 字段、默认交易所列表 |
 | `constant/paths.py`         | 数据目录和正式文件路径常量              |
-| `constant/warehouse.py`     | Parquet/DuckDB 数据层相关常量        |
+| `constant/warehouse.py`     | Parquet/DuckDB 数据层相关常量；`EXTENDED_PARQUET_TABLES` 注册第二代表的列、文本列、日期列和路径 |
 | `constant/commands.py`      | 常用 wrapper 命令默认参数            |
+| `constant/limit_price.py`   | 涨跌停价字段                        |
+| `constant/suspend.py`       | 停复牌字段与类型映射                 |
+| `constant/st_stock.py`      | ST/风险警示名单字段                  |
+| `constant/name_change.py`   | 股票曾用名字段                      |
+| `constant/stock_company.py` | 上市公司资料字段映射                 |
+| `constant/ipo.py`           | IPO 字段与单位                      |
+| `constant/stock_connect.py` | 沪深港通成分、北向持股、南北向资金字段 |
+| `constant/moneyflow.py`     | 个股资金流向字段映射与单位           |
+| `constant/margin.py`        | 融资融券明细与汇总字段映射           |
+| `constant/index.py`         | 指数基础/日线/估值/权重字段，默认基准指数列表 |
+| `constant/industry.py`      | 申万行业分类、成分、行业指数日线字段   |
+| `constant/events.py`        | 龙虎榜、大宗交易、涨跌停统计字段映射   |
+| `constant/holders.py`       | 股东户数、前十大股东字段             |
+| `constant/financial.py`     | 利润表/资产负债表/现金流量表/财务指标/预告/快报/分红/披露日期字段映射 |
+| `constant/macro.py`         | Shibor、GDP、CPI、PPI、货币供应量字段映射 |
+
+第二代脚本的复用规则：
+
+```text
+scripts/ 下的第二代抓取脚本只负责：定义 provider 请求、调用 convert_mapped_frame 转换、解析命令行。
+分页（fetch_paginated）、重试、进度、断点续跑、原子写入、ETL 日志统一由 utils/etl_runners.py 提供。
+字段映射 dict（provider 字段 -> 本地字段）是唯一事实来源；TUSHARE_*_FIELDS 和 *_COLUMNS 由它派生。
+```
 
 脚本组织规则：
 

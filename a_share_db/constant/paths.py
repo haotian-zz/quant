@@ -95,6 +95,59 @@ PARQUET_MINUTE_ROOT = PARQUET_ROOT / "minute"
 PARQUET_ADJ_FACTOR_ROOT = PARQUET_ROOT / "adj_factor"
 PARQUET_DAILY_BASIC_ROOT = PARQUET_ROOT / "daily_basic"
 
+# Second-generation tables keep the same split: curated CSV under market_data,
+# metadata, financial or macro roots; raw provider rows only under raw/.
+LIMIT_PRICE_ROOT = MARKET_DATA_ROOT / "limit_price"
+SUSPEND_ROOT = MARKET_DATA_ROOT / "suspend"
+ST_STOCK_ROOT = MARKET_DATA_ROOT / "st_stock"
+MONEYFLOW_ROOT = MARKET_DATA_ROOT / "moneyflow"
+MARGIN_ROOT = MARKET_DATA_ROOT / "margin"
+MARGIN_SUMMARY_PATH = MARKET_DATA_ROOT / "margin_summary.csv"
+STOCK_CONNECT_HOLD_ROOT = MARKET_DATA_ROOT / "stock_connect_hold"
+STOCK_CONNECT_FLOW_PATH = MARKET_DATA_ROOT / "stock_connect_flow.csv"
+INDEX_DAILY_ROOT = MARKET_DATA_ROOT / "index_daily"
+INDEX_DAILY_BASIC_ROOT = MARKET_DATA_ROOT / "index_daily_basic"
+INDEX_WEIGHT_ROOT = MARKET_DATA_ROOT / "index_weight"
+SW_INDUSTRY_DAILY_ROOT = MARKET_DATA_ROOT / "sw_industry_daily"
+DRAGON_TIGER_LIST_ROOT = MARKET_DATA_ROOT / "dragon_tiger_list"
+DRAGON_TIGER_INST_ROOT = MARKET_DATA_ROOT / "dragon_tiger_inst"
+BLOCK_TRADE_ROOT = MARKET_DATA_ROOT / "block_trade"
+LIMIT_LIST_ROOT = MARKET_DATA_ROOT / "limit_list"
+
+STOCK_NAME_HISTORY_PATH = METADATA_ROOT / "stock_name_history.csv"
+STOCK_COMPANY_PATH = METADATA_ROOT / "stock_company.csv"
+IPO_PATH = METADATA_ROOT / "ipo.csv"
+STOCK_CONNECT_CONSTITUENT_PATH = METADATA_ROOT / "stock_connect_constituent.csv"
+INDEX_BASIC_PATH = METADATA_ROOT / "index_basic.csv"
+SW_INDUSTRY_PATH = METADATA_ROOT / "sw_industry.csv"
+SW_INDUSTRY_MEMBER_PATH = METADATA_ROOT / "sw_industry_member.csv"
+
+# Financial statements are partitioned by report period because the provider
+# bulk interfaces return one period for the whole market per request.
+FINANCIAL_ROOT = DATA_ROOT / "financial"
+INCOME_ROOT = FINANCIAL_ROOT / "income"
+BALANCE_SHEET_ROOT = FINANCIAL_ROOT / "balance_sheet"
+CASH_FLOW_ROOT = FINANCIAL_ROOT / "cash_flow"
+FINANCIAL_INDICATOR_ROOT = FINANCIAL_ROOT / "indicator"
+FORECAST_ROOT = FINANCIAL_ROOT / "forecast"
+EXPRESS_ROOT = FINANCIAL_ROOT / "express"
+DISCLOSURE_DATE_ROOT = FINANCIAL_ROOT / "disclosure_date"
+DIVIDEND_ROOT = FINANCIAL_ROOT / "dividend"
+HOLDER_NUMBER_ROOT = FINANCIAL_ROOT / "holder_number"
+TOP10_HOLDERS_ROOT = FINANCIAL_ROOT / "top10_holders"
+TOP10_FLOAT_HOLDERS_ROOT = FINANCIAL_ROOT / "top10_float_holders"
+
+MACRO_ROOT = DATA_ROOT / "macro"
+SHIBOR_PATH = MACRO_ROOT / "shibor.csv"
+GDP_PATH = MACRO_ROOT / "gdp.csv"
+CPI_PATH = MACRO_ROOT / "cpi.csv"
+PPI_PATH = MACRO_ROOT / "ppi.csv"
+MONEY_SUPPLY_PATH = MACRO_ROOT / "money_supply.csv"
+
+RAW_TUSHARE_ROOT = RAW_ROOT / "tushare"
+PARQUET_FINANCIAL_ROOT = PARQUET_ROOT / "financial"
+PARQUET_MACRO_ROOT = PARQUET_ROOT / "macro"
+
 # DuckDB is reserved as a query layer over Parquet, not the current ETL target.
 DUCKDB_PATH = WAREHOUSE_ROOT / "a_share.duckdb"
 

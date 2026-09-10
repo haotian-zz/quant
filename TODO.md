@@ -2,80 +2,52 @@
 
 ## A Share Data Tables
 
-Current completed foundation:
+Completed foundation:
 
 - Stock list / stock master data
 - Trade calendar
-- Historical daily prices
-- Historical minute prices
-- Adjustment factors
-- Locally rebuilt adjusted daily prices
+- Historical daily prices, adjustment factors, locally rebuilt qfq/hfq
+- Historical minute prices (1m, 5m)
+- Daily indicators (daily_basic)
 
-### P0: Core Next Tables
+Completed second generation (built by `scripts/workflows/build_extended_history.py`, see README "Extended Tables"):
 
-1. Daily indicators
-   - Status: schema and ETL implemented; full historical fetch still needs to be run.
-   - Needed for market cap, float market cap, turnover, volume ratio, PE, PB, dividend yield, and common factor research.
+- Trading constraints: limit prices, suspensions, ST list, limit-up/down statistics
+- Universe / metadata: stock name history, company profiles, IPO list, stock-connect constituents, index metadata, Shenwan industry classification and membership history
+- Benchmarks: index daily quotes, index valuation, index constituent weights, Shenwan industry index quotes
+- Flows and positions: per-stock money flow, margin detail and summary, northbound holdings, north/south aggregate flow, dragon-tiger list and seats, block trades
+- Fundamentals by report period: income, balance sheet, cash flow, financial indicators, forecasts, express reports, disclosure dates, top-10 holders / float holders; per stock: dividends, shareholder counts
+- Macro: Shibor, GDP, CPI, PPI, money supply
 
-2. Daily limit prices
-   - Needed to model A-share limit-up/limit-down constraints, tradability, slippage, and execution realism.
+### P0: Operations
 
-3. Daily suspension/resumption data
-   - Needed to filter suspended days and avoid generating impossible trades.
+1. Incremental updates for second-generation tables
+   - per-date and per-period tables already re-fetch the trailing year / recent periods under `--resume`.
+   - per-stock tables (limit_price, moneyflow, margin, stock_connect_hold) still need a `max(trade_date)+1` incremental path like `update_daily.py`; add them to `update_daily_data.py` once implemented.
 
-4. Daily share capital / pre-market share data
-   - Needed for share capital, float shares, free float, market-cap checks, and capacity constraints.
+2. Delisted stocks
+   - First-generation daily/adj_factor/daily_basic and the per-stock second-generation tables cover `status=listed` only. Backfill with `--statuses listed delisted` to remove survivorship bias in point-in-time universes.
 
-### P1: Important Data Quality And Universe Tables
+3. Bring the price layer current
+   - `daily/none`, `adj_factor` and `daily_basic` were last updated in May 2026; run `update_daily_data.py` and a `fetch_daily_basic.py` incremental.
 
-5. Historical stock list
-   - Needed to build point-in-time universes and reduce survivorship bias.
+### P1: Data Quality
 
-6. Stock name changes
-   - Useful for data cleaning, ST/restructuring/renaming investigation, and historical debugging.
-
-7. ST stock list
-   - Needed for strategy filters and risk controls around ST and delisting-risk stocks.
-
-8. ST risk warning board stocks
-   - Related to ST filtering; useful for fuller A-share risk-state coverage.
-
-9. Listed company basic information
-   - Useful metadata layer for company attributes, region, industry, and research context.
+4. Cross-check local qfq/hfq against provider `stk_factor_pro` adjusted prices for a sample of stocks.
+5. Validate `moneyflow` and `margin` totals against `margin_summary` / exchange statistics.
+6. Add a lightweight coverage report (files, min/max dates, row counts per table) so gaps are visible after each build.
 
 ### P2: Strategy-Dependent Tables
 
-10. Weekly and monthly prices
-    - Can be generated locally from daily data; fetch only if provider fields or update workflow are clearly useful.
-
-11. Weekly/monthly adjusted prices
-    - Prefer generating locally from daily prices and adjustment factors for consistent adjustment logic.
-
-12. Provider adjusted prices
-    - Lower priority because local `none + adj_factor -> qfq/hfq` already exists; useful mainly for cross-checking.
-
-13. Shanghai/Shenzhen-Hong Kong Stock Connect stock list
-    - Useful if strategies need northbound eligibility or stock-connect universe filters.
-
-14. Stock Connect top traded stocks
-    - Useful for flow and event factors, but not core warehouse infrastructure.
-
-15. Southbound Stock Connect top traded stocks and turnover stats
-    - Lower priority while the warehouse remains A-share focused.
+7. `stk_factor_pro` technical factors (261 columns, ~8k rows per stock) — only if local factor computation proves insufficient.
+8. `cyq_perf` / `cyq_chips` chip distribution (2018+).
+9. Call/close auction data (`stk_auction_o`, `stk_auction_c`, 2009+).
+10. `share_float` lock-up releases, `pledge_stat` pledges, `repurchase` buybacks, `stk_holdertrade` insider trades.
+11. `bak_basic` historical stock list snapshots (2015+) for point-in-time industry/name checks.
+12. Weekly/monthly bars — generate locally from daily data.
 
 ### P3: Defer
 
-16. Realtime daily and realtime minute data
-    - Requires online scheduling, overwrite rules, intraday state handling, and recovery logic. Defer until live monitoring or trading is in scope.
-
-17. Generic quote interface
-    - Too broad for formal table design. Prefer domain-specific warehouse tables.
-
-18. Company management, compensation, and shareholding
-    - Useful for fundamental/event research, but not the next core market-data layer.
-
-19. BSE old/new code mapping
-    - Small and useful; can be added opportunistically, but it is not a major dependency.
-
-20. IPO new listings
-    - Useful for IPO/listing-age filters, but lower priority than daily indicators, limit prices, suspensions, and point-in-time universe data.
+13. Realtime daily and realtime minute data (needs scheduling, overwrite rules and recovery logic).
+14. Company management, compensation and shareholding tables.
+15. News and announcement text (`news`, `anns_d`) — not enabled for the current token.

@@ -42,7 +42,14 @@ Every fetch script also accepts `--token` if you do not want to use the environm
 a_share_db/data/
 ├── metadata/
 │   ├── stock_basic.csv
-│   └── trade_calendar.csv
+│   ├── trade_calendar.csv
+│   ├── stock_name_history.csv
+│   ├── stock_company.csv
+│   ├── ipo.csv
+│   ├── stock_connect_constituent.csv
+│   ├── index_basic.csv
+│   ├── sw_industry.csv
+│   └── sw_industry_member.csv
 ├── market_data/
 │   ├── daily/
 │   │   ├── none/
@@ -54,13 +61,50 @@ a_share_db/data/
 │   │       ├── none/
 │   │       ├── qfq/
 │   │       └── hfq/
-│   └── adj_factor/
+│   ├── adj_factor/
+│   ├── limit_price/            {code}.csv   涨跌停价
+│   ├── moneyflow/              {code}.csv   个股资金流向
+│   ├── margin/                 {code}.csv   融资融券明细
+│   ├── stock_connect_hold/     {code}.csv   北向持股
+│   ├── suspend/                {year}.csv   停复牌
+│   ├── st_stock/               {year}.csv   ST/风险警示名单
+│   ├── dragon_tiger_list/      {year}.csv   龙虎榜
+│   ├── dragon_tiger_inst/      {year}.csv   龙虎榜机构席位
+│   ├── block_trade/            {year}.csv   大宗交易
+│   ├── limit_list/             {year}.csv   涨跌停统计
+│   ├── index_daily/            {index_code}.csv
+│   ├── index_daily_basic/      {index_code}.csv
+│   ├── index_weight/           {index_code}.csv
+│   ├── sw_industry_daily/      {industry_index_code}.csv
+│   ├── margin_summary.csv
+│   └── stock_connect_flow.csv
+├── financial/
+│   ├── income/                 {period}.csv 利润表
+│   ├── balance_sheet/          {period}.csv 资产负债表
+│   ├── cash_flow/              {period}.csv 现金流量表
+│   ├── indicator/              {period}.csv 财务指标
+│   ├── forecast/               {period}.csv 业绩预告
+│   ├── express/                {period}.csv 业绩快报
+│   ├── disclosure_date/        {period}.csv 财报披露日期
+│   ├── top10_holders/          {period}.csv
+│   ├── top10_float_holders/    {period}.csv
+│   ├── dividend/               {code}.csv   分红送股
+│   └── holder_number/          {code}.csv   股东户数
+├── macro/
+│   ├── shibor.csv
+│   ├── gdp.csv
+│   ├── cpi.csv
+│   ├── ppi.csv
+│   └── money_supply.csv
 ├── parquet/
 │   ├── metadata/
 │   ├── daily/
 │   ├── daily_basic/
 │   ├── minute/
-│   └── adj_factor/
+│   ├── adj_factor/
+│   ├── financial/
+│   ├── macro/
+│   └── {extended table}/
 ├── raw/
 ├── warehouse/
 │   └── a_share.duckdb
@@ -88,6 +132,8 @@ market_data/minute/1m/none/600519.csv -> parquet/minute/1m/none/600519.parquet
 4. Fetch adjustment factors.
 5. Fetch daily basic indicators.
 6. Build qfq/hfq daily prices locally.
+7. Build the extended tables (`scripts/workflows/build_extended_history.py`).
+8. Build Parquet (`--tables all`).
 
 ```bash
 python3 a_share_db/scripts/metadata/fetch_stock_basic.py --statuses L D P G
@@ -200,6 +246,50 @@ Refresh stock master data and trade calendar:
 ```bash
 python3 a_share_db/scripts/metadata/refresh_metadata.py
 ```
+
+## Extended Tables (Second Generation)
+
+After the price layer, the warehouse adds the tables a systematic A-share strategy needs for realistic backtests and factor research. They are built by one command, in priority order, with resume semantics:
+
+```bash
+python3 a_share_db/scripts/workflows/build_extended_history.py
+```
+
+Run a subset with `--groups`:
+
+```bash
+python3 a_share_db/scripts/workflows/build_extended_history.py --groups metadata index
+```
+
+| Group | Why it matters | Tables |
+| ----- | -------------- | ------ |
+| `metadata` | universes, point-in-time names, IPO age filters, industry/benchmark reference | stock_name_history, stock_company, ipo, stock_connect_constituent, index_basic, sw_industry, sw_industry_member, stock_connect_flow, margin_summary, macro |
+| `index` | benchmark returns, index universes, industry neutralization | index_daily, index_daily_basic, index_weight, sw_industry_daily |
+| `financial` | fundamental factors with announce dates for point-in-time joins | income, balance_sheet, cash_flow, indicator, forecast, express, disclosure_date, top10_holders, top10_float_holders |
+| `stock` | tradability and flow factors, per stock | limit_price, moneyflow, margin, stock_connect_hold, dividend, holder_number |
+| `daily` | suspension/ST filters and event studies, per trade date | suspend, st_stock, dragon_tiger_list, dragon_tiger_inst, block_trade, limit_list |
+
+All second-generation scripts share `a_share_db/utils/etl_common.py` (pagination, conversion, atomic writes, logging), `a_share_db/utils/etl_runners.py` (per-stock / per-date / per-key / single-table loops) and `a_share_db/utils/cli.py` (common flags). A new table therefore needs only a constant module with the provider-to-local field map plus a ~100 line script.
+
+Every script accepts the same operational flags as the first-generation scripts (`--dry-run`, `--resume`, `--request-interval`, `--progress-every`, `--max-retries`, `--retry-interval`, `--no-log`, `--backup`, `--with-raw`). Per-stock scripts add `--codes/--codes-file/--all-stocks/--limit-stocks/--statuses`; per-date scripts add `--trade-calendar/--limit-days`; per-period scripts add `--periods/--refresh-recent-days`.
+
+Layout rules:
+
+- Per-stock time series stay one file per stock (`{code}.csv`), like `daily/`.
+- Sparse per-day tables (suspensions, ST list, events) are one file per year (`{year}.csv`); resume skips complete years and always re-fetches the last year.
+- Financial statements are one file per report period (`{period}.csv`) because Tushare bulk interfaces return the whole market for a period in one request; resume re-fetches periods ending within `--refresh-recent-days` (default 400) so late filings and restatements are picked up.
+- Index and industry identifiers keep the Wind-style suffix (`000300.SH`, `801010.SI`) because the six-digit part is not unique across publishers.
+- Units follow the first-generation convention: shares in 股, money in 元, ratios in %.
+
+Provider-to-local field maps are the single source of truth and live in `a_share_db/constant/{limit_price,suspend,st_stock,name_change,stock_company,ipo,stock_connect,moneyflow,margin,index,industry,events,holders,financial,macro}.py`.
+
+Build Parquet for the new tables after the CSV build:
+
+```bash
+python3 a_share_db/scripts/warehouse/build_parquet.py --tables extended --resume --progress-every 100
+```
+
+`--tables all` now includes the extended tables; `financial` and `macro` are group shortcuts.
 
 ## Scripts
 
@@ -674,6 +764,76 @@ print(build_tushare_ts_code("600519", "SSE"))   # 600519.SH
 print(build_sina_symbol("600519", "SSE"))       # sh600519
 print(build_eastmoney_secid("600519", "SSE"))   # 1.600519
 ```
+
+### Second-generation fetch scripts
+
+Each script writes the formal table listed and supports `--dry-run` for a smoke test. Smoke-test examples:
+
+```bash
+# market_data, per stock
+python3 a_share_db/scripts/market/fetch_limit_price.py --codes 600519 --start-date 20240101 --end-date 20240131 --dry-run
+python3 a_share_db/scripts/market/fetch_moneyflow.py --codes 600519 --start-date 20240101 --end-date 20240131 --dry-run
+python3 a_share_db/scripts/market/fetch_margin.py --tables detail --codes 600519 --start-date 20240101 --end-date 20240131 --dry-run
+python3 a_share_db/scripts/market/fetch_stock_connect_hold.py --codes 600519 --start-date 20240101 --end-date 20240131 --dry-run
+
+# market_data, per trade date (yearly files)
+python3 a_share_db/scripts/market/fetch_suspend.py --start-date 20240102 --end-date 20240105 --dry-run
+python3 a_share_db/scripts/market/fetch_st_stock.py --start-date 20240102 --end-date 20240103 --dry-run
+python3 a_share_db/scripts/market/fetch_market_events.py --tables block_trade limit_list --start-date 20240102 --end-date 20240103 --dry-run
+
+# market_data, single files
+python3 a_share_db/scripts/market/fetch_margin.py --tables summary --dry-run
+python3 a_share_db/scripts/market/fetch_stock_connect_flow.py --dry-run
+
+# metadata
+python3 a_share_db/scripts/metadata/fetch_name_change.py --dry-run
+python3 a_share_db/scripts/metadata/fetch_stock_company.py --dry-run
+python3 a_share_db/scripts/metadata/fetch_ipo.py --dry-run
+python3 a_share_db/scripts/metadata/fetch_stock_connect_constituent.py --dry-run
+
+# index and industry
+python3 a_share_db/scripts/index/fetch_index_basic.py --dry-run
+python3 a_share_db/scripts/index/fetch_index_daily.py --index-codes 000300.SH --start-date 20240101 --end-date 20240131 --dry-run
+python3 a_share_db/scripts/index/fetch_index_weight.py --index-codes 000300.SH --start-date 20240101 --end-date 20240301 --dry-run
+python3 a_share_db/scripts/index/fetch_sw_industry.py --dry-run
+python3 a_share_db/scripts/index/fetch_sw_industry_daily.py --index-codes 801010.SI --start-date 20240101 --end-date 20240131 --dry-run
+
+# financial
+python3 a_share_db/scripts/financial/fetch_financial_statements.py --periods 20231231 --tables income --dry-run
+python3 a_share_db/scripts/financial/fetch_dividend.py --codes 600519 --dry-run
+python3 a_share_db/scripts/financial/fetch_holder_number.py --codes 600519 --dry-run
+python3 a_share_db/scripts/financial/fetch_top10_holders.py --periods 20231231 --dry-run
+
+# macro
+python3 a_share_db/scripts/macro/fetch_macro.py --dry-run
+```
+
+Full-history commands are what `build_extended_history.py` runs; use the individual scripts when you need to rebuild one table, for example:
+
+```bash
+python3 a_share_db/scripts/market/fetch_limit_price.py --all-stocks --resume --request-interval 0.15 --progress-every 200
+python3 a_share_db/scripts/financial/fetch_financial_statements.py --tables income balance_sheet cash_flow indicator --resume
+python3 a_share_db/scripts/market/fetch_suspend.py --resume
+```
+
+Import example:
+
+```python
+import os
+from a_share_db.scripts.financial.fetch_financial_statements import run_financial_table_etl
+
+result = run_financial_table_etl("income", token=os.environ["TUSHARE_TOKEN"], periods=["20231231"], dry_run=True)
+print(result["row_count"])
+```
+
+Notes on provider behaviour discovered while building these tables:
+
+- `suspend_d` per stock is truncated to 100 rows, so suspensions are fetched by trade date.
+- `stock_st` history starts in 2005; earlier ST status can be derived from `stock_name_history` names containing `ST`.
+- `new_share` coverage starts in 2008.
+- Bulk financial interfaces (`*_vip`) repeat rows for the same filing; rows are de-duplicated on `code + report_period + statement_type + actual_announce_date`, preferring `is_update = 1`.
+- Only `statement_type = consolidated` (provider `report_type=1`) is fetched by default; pass `--report-types 1 4` to keep prior-period consolidated statements as well.
+- Per-stock scripts default to `--statuses listed`; pass `--statuses listed delisted` to include delisted stocks and reduce survivorship bias.
 
 ## Operational Notes
 
