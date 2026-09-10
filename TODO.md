@@ -21,9 +21,8 @@ Completed second generation (built by `scripts/workflows/build_extended_history.
 
 ### P0: Operations
 
-1. Incremental updates for second-generation tables
-   - per-date and per-period tables already re-fetch the trailing year / recent periods under `--resume`.
-   - per-stock tables (limit_price, moneyflow, margin, stock_connect_hold) still need a `max(trade_date)+1` incremental path like `update_daily.py`; add them to `update_daily_data.py` once implemented.
+1. One routine daily command
+   - Incremental paths exist (`update_daily_data.py`, `update_daily_basic.py`, `build_extended_history.py --update`); fold them into a single scheduled workflow with a trading-day check.
 
 2. Delisted stocks
    - First-generation daily/adj_factor/daily_basic and the per-stock second-generation tables cover `status=listed` only. Backfill with `--statuses listed delisted` to remove survivorship bias in point-in-time universes.

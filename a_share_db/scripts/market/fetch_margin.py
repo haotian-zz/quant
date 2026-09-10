@@ -65,7 +65,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--summary-output", type=Path, default=DEFAULT_SUMMARY_OUTPUT, help=f"Summary output CSV. Default: {DEFAULT_SUMMARY_OUTPUT}")
     parser.add_argument("--raw-summary-output", type=Path, default=DEFAULT_RAW_SUMMARY_OUTPUT, help=f"Raw summary output when --with-raw is set. Default: {DEFAULT_RAW_SUMMARY_OUTPUT}")
     parser.add_argument("--with-raw", action="store_true", help="Also write raw provider CSV files.")
-    add_run_control_arguments(parser)
+    add_run_control_arguments(parser, incremental=True)
     return parser.parse_args()
 
 
@@ -133,6 +133,7 @@ def run_margin_etl(token: str, output_root: Path = DEFAULT_OUTPUT_ROOT, raw_outp
         convert_tushare_margin_detail,
         output_root=output_root,
         raw_output_root=raw_output_root,
+        columns=MARGIN_COLUMNS,
         **kwargs,
     )
 

@@ -100,10 +100,12 @@ def add_output_arguments(
         parser.add_argument("--with-raw", action="store_true", help="Also write raw provider CSV files.")
 
 
-def add_run_control_arguments(parser: argparse.ArgumentParser, resumable: bool = True, loops: bool = True) -> None:
+def add_run_control_arguments(parser: argparse.ArgumentParser, resumable: bool = True, loops: bool = True, incremental: bool = False) -> None:
     parser.add_argument("--dry-run", action="store_true", help="Fetch and convert data, but do not write CSV files or logs.")
     if resumable:
         parser.add_argument("--resume", action="store_true", help="Skip outputs that already exist and are non-empty.")
+    if incremental:
+        parser.add_argument("--update", action="store_true", help="Incrementally extend existing files from their max trade_date; missing files are fetched in full.")
     if loops:
         parser.add_argument(
             "--request-interval",
@@ -147,6 +149,8 @@ def run_control_kwargs(args: argparse.Namespace) -> dict:
     for name in ("resume", "request_interval", "progress_every", "stop_on_error"):
         if hasattr(args, name):
             kwargs[name] = getattr(args, name)
+    if hasattr(args, "update"):
+        kwargs["incremental"] = args.update
     return kwargs
 
 

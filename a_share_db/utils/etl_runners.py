@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import time
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -32,8 +32,10 @@ from a_share_db.utils.etl_common import (
     get_tushare_pro,
     import_pandas,
     load_requested_codes,
+    merge_rows,
     now_text,
     parse_date_arg,
+    read_existing_csv,
     read_stock_basic,
     read_trading_days,
     retry_call,
@@ -155,11 +157,18 @@ def run_per_stock_etl(
     stop_on_error: bool = False,
     clip_start_to_list_date: bool = True,
     progress_label: str | None = None,
+    incremental: bool = False,
+    columns: list[str] | None = None,
+    merge_keys: tuple[str, ...] = ("code", "trade_date"),
 ) -> dict:
     """Fetch one provider table per stock and write data/.../{code}.csv files.
 
     fetch_fn(pro, ts_code, stock_row, start_date, end_date) -> raw DataFrame
     convert_fn(raw, stock_row) -> formal DataFrame
+
+    With incremental=True an existing file is the checkpoint: rows are fetched
+    from max(trade_date)+1, merged on merge_keys and the file is rewritten only
+    when new rows arrived. Missing files are fetched in full.
     """
     if not token:
         raise ValueError("Tushare token is required.")
@@ -180,7 +189,10 @@ def run_per_stock_etl(
             output_path = Path(output_root) / f"{code}.csv"
             ts_code = ""
             try:
-                if resume and _file_is_complete(output_path):
+                existing = None
+                if incremental and columns and _file_is_complete(output_path):
+                    existing = read_existing_csv(output_path, columns)
+                elif resume and _file_is_complete(output_path):
                     run.skipped_count += 1
                     continue
 
@@ -191,6 +203,16 @@ def run_per_stock_etl(
                     list_date = parse_date_arg(stock.get("list_date") or None)
                     if list_date and list_date > requested_start:
                         stock_start = list_date.strftime("%Y%m%d")
+                if existing is not None and not existing.empty:
+                    # Continue from the day after the local file ends.
+                    local_max = existing["trade_date"].dropna().astype(str).max()
+                    next_day = parse_date_arg(local_max) + timedelta(days=1)
+                    if requested_start is None or next_day > requested_start:
+                        stock_start = next_day.strftime("%Y%m%d")
+                    requested_end = parse_date_arg(end_date)
+                    if requested_end is not None and next_day > requested_end:
+                        run.skipped_count += 1
+                        continue
 
                 raw = retry_call(
                     lambda: fetch_fn(pro, ts_code, stock, stock_start, end_date),
@@ -199,7 +221,14 @@ def run_per_stock_etl(
                 )
                 normalized = convert_fn(raw, stock)
                 run.row_count += len(normalized)
-                run.write(normalized, output_path, create_backup)
+                if existing is not None:
+                    merged = merge_rows(existing, normalized, columns, list(merge_keys))
+                    if len(merged) > len(existing):
+                        run.write(merged, output_path, create_backup)
+                    else:
+                        run.skipped_count += 1
+                else:
+                    run.write(normalized, output_path, create_backup)
                 if write_raw and raw_output_root is not None and not raw.empty:
                     run.write(raw, Path(raw_output_root) / f"{code}.csv", create_backup)
                 if request_interval:

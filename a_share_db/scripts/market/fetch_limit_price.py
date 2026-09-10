@@ -51,7 +51,7 @@ def parse_args() -> argparse.Namespace:
     add_stock_selection_arguments(parser)
     add_date_range_arguments(parser, default_start=DEFAULT_LIMIT_PRICE_START_DATE, end_defaults_to_today=True)
     add_output_arguments(parser, DEFAULT_OUTPUT_ROOT, DEFAULT_RAW_OUTPUT_ROOT)
-    add_run_control_arguments(parser)
+    add_run_control_arguments(parser, incremental=True)
     return parser.parse_args()
 
 
@@ -87,6 +87,7 @@ def run_limit_price_etl(token: str, output_root: Path = DEFAULT_OUTPUT_ROOT, raw
         convert_tushare_limit_price,
         output_root=output_root,
         raw_output_root=raw_output_root,
+        columns=LIMIT_PRICE_COLUMNS,
         **kwargs,
     )
 

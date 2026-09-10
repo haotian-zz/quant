@@ -808,6 +808,17 @@ python3 a_share_db/scripts/financial/fetch_top10_holders.py --periods 20231231 -
 python3 a_share_db/scripts/macro/fetch_macro.py --dry-run
 ```
 
+Incremental updates. Per-stock trade-date tables (`limit_price`, `moneyflow`, `margin`, `stock_connect_hold`) accept `--update`: each existing file is extended from its max `trade_date`, missing files are fetched in full. `daily_basic` has its own incremental command. Bringing everything to today therefore is:
+
+```bash
+python3 a_share_db/scripts/workflows/update_daily_data.py                       # daily/none, adj_factor, hfq
+python3 a_share_db/scripts/market/update_daily_basic.py --all-stocks             # daily_basic
+python3 a_share_db/scripts/workflows/build_extended_history.py --update          # all extended tables
+python3 a_share_db/scripts/warehouse/build_parquet.py --tables metadata daily adj_factor daily_basic extended
+```
+
+`build_extended_history.py --update` re-fetches the last year of per-date tables, recent report periods of financial tables, all single-file tables, and refreshes `dividend`/`holder_number` in full because those provider interfaces have no date filter.
+
 Full-history commands are what `build_extended_history.py` runs; use the individual scripts when you need to rebuild one table, for example:
 
 ```bash

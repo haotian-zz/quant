@@ -65,6 +65,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--end-date", default=datetime.now().strftime("%Y%m%d"), help="End date in YYYYMMDD format. Default: today.")
     parser.add_argument("--dry-run", action="store_true", help="Fetch and convert data, but do not write CSV files or logs.")
     parser.add_argument("--no-resume", dest="resume", action="store_false", help="Re-fetch outputs that already exist. Default: resume.")
+    parser.add_argument("--update", action="store_true", help="Bring existing tables to --end-date: per-stock trade_date tables extend incrementally, dividend/holder_number are refreshed in full.")
     parser.add_argument("--request-interval", type=float, default=DEFAULT_REQUEST_INTERVAL, help=f"Seconds between provider requests. Default: {DEFAULT_REQUEST_INTERVAL}.")
     parser.add_argument("--progress-every", type=int, default=DEFAULT_PROGRESS_EVERY, help=f"Print progress every N items. Default: {DEFAULT_PROGRESS_EVERY}.")
     parser.add_argument("--max-retries", type=int, default=DEFAULT_MAX_RETRIES, help=f"Maximum attempts per request. Default: {DEFAULT_MAX_RETRIES}.")
@@ -128,13 +129,17 @@ def build_steps(args: argparse.Namespace) -> list[tuple[str, str, callable]]:
     ]
 
     # Per-stock tables; each is one request per listed stock.
+    # In update mode trade_date tables extend from their local max date; the two
+    # announcement-keyed tables have no date filter and are refreshed in full.
+    series = {**loop, "incremental": args.update}
+    refresh = {**loop, "resume": loop["resume"] and not args.update}
     steps += [
-        ("stock", "limit_price", lambda: run_limit_price_etl(token, all_stocks=True, end_date=end_date, **loop)),
-        ("stock", "moneyflow", lambda: run_moneyflow_etl(token, all_stocks=True, end_date=end_date, **loop)),
-        ("stock", "margin", lambda: run_margin_etl(token, all_stocks=True, end_date=end_date, **loop)),
-        ("stock", "stock_connect_hold", lambda: run_stock_connect_hold_etl(token, all_stocks=True, end_date=end_date, **loop)),
-        ("stock", "dividend", lambda: run_dividend_etl(token, all_stocks=True, **loop)),
-        ("stock", "holder_number", lambda: run_holder_number_etl(token, all_stocks=True, **loop)),
+        ("stock", "limit_price", lambda: run_limit_price_etl(token, all_stocks=True, end_date=end_date, **series)),
+        ("stock", "moneyflow", lambda: run_moneyflow_etl(token, all_stocks=True, end_date=end_date, **series)),
+        ("stock", "margin", lambda: run_margin_etl(token, all_stocks=True, end_date=end_date, **series)),
+        ("stock", "stock_connect_hold", lambda: run_stock_connect_hold_etl(token, all_stocks=True, end_date=end_date, **series)),
+        ("stock", "dividend", lambda: run_dividend_etl(token, all_stocks=True, **refresh)),
+        ("stock", "holder_number", lambda: run_holder_number_etl(token, all_stocks=True, **refresh)),
     ]
 
     # Per-trade-date tables; each is one request per trading day.
