@@ -90,6 +90,8 @@ def convert_tushare_stock_connect_flow(raw):
 
 
 def run_stock_connect_flow_etl(token: str, start_date: str | None = None, end_date: str | None = None, output_path: Path = DEFAULT_OUTPUT, raw_output_path: Path = DEFAULT_RAW_OUTPUT, **kwargs) -> dict:
+    # The provider rejects unbounded queries, so importers get the coverage start too.
+    start_date = start_date or DEFAULT_STOCK_CONNECT_FLOW_START_DATE
     return run_single_table_etl(
         "fetch_stock_connect_flow",
         token,
