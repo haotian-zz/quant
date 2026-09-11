@@ -46,6 +46,7 @@ from a_share_db.scripts.market.fetch_daily import (
     select_stock_rows,
     write_csv,
 )
+from a_share_db.utils.etl_common import DEFAULT_STOCK_STATUSES
 from a_share_db.utils.progress import ProgressReporter
 from a_share_db.utils.provider_codes import build_tushare_ts_code
 
@@ -88,6 +89,12 @@ def parse_args() -> argparse.Namespace:
         "--all-stocks",
         action="store_true",
         help="Fetch every listed stock in data/metadata/stock_basic.csv.",
+    )
+    parser.add_argument(
+        "--statuses",
+        nargs="+",
+        default=list(DEFAULT_STOCK_STATUSES),
+        help="Local stock_basic status values to include (listed delisted suspended approved, or all). Default: listed.",
     )
     parser.add_argument(
         "--stock-basic",
@@ -217,8 +224,44 @@ def parse_args() -> argparse.Namespace:
         help="Move existing output files to backups before replacing them. Default: off.",
     )
     parser.add_argument("--no-backup", dest="create_backup", action="store_false", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--update",
+        action="store_true",
+        help=(
+            "Append bars after each existing file's last bar_end_time instead of re-fetching; "
+            "missing files are fetched in full from --start-date."
+        ),
+    )
     parser.set_defaults(create_backup=False)
     return parser.parse_args()
+
+
+def read_last_bar_end_time(path: Path) -> datetime | None:
+    """Return the last bar_end_time of a minute CSV by reading only its tail.
+
+    Minute files are tens of megabytes, so a full parse per stock would make
+    daily updates take hours; the tail is enough because files are sorted.
+    """
+    if not path.exists() or path.stat().st_size == 0:
+        return None
+    with path.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        size = handle.tell()
+        handle.seek(max(size - 8192, 0))
+        tail = handle.read().decode("utf-8", errors="ignore")
+    for line in reversed(tail.splitlines()):
+        parts = line.split(",")
+        if len(parts) > 3 and parts[0].isdigit():
+            try:
+                return datetime.strptime(parts[3], "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                continue
+    return None
+
+
+def append_minute_rows(frame, path: Path) -> None:
+    """Append new bars to an existing sorted minute file without rewriting it."""
+    frame.to_csv(path, mode="a", header=False, index=False, encoding="utf-8", lineterminator="\n")
 
 
 def normalize_frequency(value: str) -> str:
@@ -575,6 +618,7 @@ def run_minute_etl(
     codes_file: Path | None = None,
     all_stocks: bool = False,
     stock_basic_path: Path = DEFAULT_STOCK_BASIC,
+    statuses: Iterable[str] = DEFAULT_STOCK_STATUSES,
     frequencies: Iterable[str] = ("1m",),
     start_date: str | None = None,
     end_date: str | None = None,
@@ -596,6 +640,7 @@ def run_minute_etl(
     max_retries: int = 3,
     retry_interval: float = 5.0,
     stop_on_error: bool = False,
+    update: bool = False,
 ) -> dict:
     if not token:
         raise ValueError("Tushare token is required.")
@@ -630,7 +675,7 @@ def run_minute_etl(
                 window_trading_days,
             )
 
-        stock_basic = read_stock_basic(Path(stock_basic_path))
+        stock_basic = read_stock_basic(Path(stock_basic_path), statuses)
         selected_codes = load_requested_codes(codes, codes_file)
         stocks = select_stock_rows(stock_basic, selected_codes, all_stocks, limit_stocks)
         stock_count = len(stocks)
@@ -652,16 +697,21 @@ def run_minute_etl(
                 current_job += 1
                 output_path = Path(output_root) / frequency / "none" / f"{code}.csv"
                 provider_freq = TUSHARE_MINUTE_FREQ_MAP[frequency]
+                last_bar_end = read_last_bar_end_time(output_path) if update else None
+                file_start_dt = stock_start_dt
+                if last_bar_end is not None:
+                    # The existing file is the checkpoint: continue one second after its last bar.
+                    file_start_dt = last_bar_end + timedelta(seconds=1)
                 windows = build_request_windows(
                     frequency,
-                    stock_start_dt,
+                    file_start_dt,
                     end_dt,
                     trade_dates,
                     trading_days_by_frequency[frequency],
                     window_days,
                 )
                 try:
-                    if stock_start_dt is not None and end_dt is not None and stock_start_dt > end_dt:
+                    if file_start_dt is not None and end_dt is not None and file_start_dt > end_dt:
                         # Stock listed after the requested end date.
                         skipped_count += 1
                         progress.maybe_print(
@@ -675,7 +725,7 @@ def run_minute_etl(
                             ),
                         )
                         continue
-                    if resume and output_path.exists() and output_path.stat().st_size > 0:
+                    if resume and last_bar_end is None and output_path.exists() and output_path.stat().st_size > 0:
                         # Full-history fetch can skip completed stock/frequency files.
                         skipped_count += 1
                         progress.maybe_print(
@@ -701,9 +751,17 @@ def run_minute_etl(
                     )
                     request_count += len(windows)
                     normalized = convert_tushare_minute(raw, name_by_code, frequency)
+                    if last_bar_end is not None:
+                        # Guard against provider overlap so the append never duplicates a bar.
+                        normalized = normalized[normalized["bar_end_time"] > last_bar_end.strftime("%Y-%m-%d %H:%M:%S")]
                     row_count += len(normalized)
 
-                    if not dry_run:
+                    if last_bar_end is not None:
+                        if normalized.empty:
+                            skipped_count += 1
+                        elif not dry_run:
+                            append_minute_rows(normalized, output_path)
+                    elif not dry_run:
                         # Formal output is unadjusted minute data only.
                         # write_csv uses a temp file and optional backup.
                         backup_path = write_csv(
@@ -809,6 +867,7 @@ def main() -> int:
             codes_file=args.codes_file,
             all_stocks=args.all_stocks,
             stock_basic_path=args.stock_basic,
+            statuses=args.statuses,
             frequencies=args.frequencies,
             start_date=args.start_date,
             end_date=args.end_date,
@@ -829,6 +888,7 @@ def main() -> int:
             max_retries=args.max_retries,
             retry_interval=args.retry_interval,
             stop_on_error=args.stop_on_error,
+            update=args.update,
         )
         if args.dry_run:
             print(

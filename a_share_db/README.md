@@ -808,6 +808,17 @@ python3 a_share_db/scripts/financial/fetch_top10_holders.py --periods 20231231 -
 python3 a_share_db/scripts/macro/fetch_macro.py --dry-run
 ```
 
+Routine refresh in one command (skips non-trading days unless `--force`; schedule it every evening):
+
+```bash
+python3 a_share_db/scripts/workflows/refresh_all.py                 # prices, daily_basic, extended tables, 1m/5m minute bars, Parquet
+python3 a_share_db/scripts/workflows/refresh_all.py --skip-minute   # same without minute bars
+```
+
+Stock selection on every per-stock script (first and second generation) accepts `--statuses`; the default is `listed`, and `--statuses delisted` backfills delisted stocks so point-in-time universes are free of survivorship bias.
+
+Minute bars are updated in place with `fetch_minute.py --update`: the last `bar_end_time` is read from the tail of each file and only newer bars are appended, so a daily update does not rewrite hundreds of gigabytes.
+
 Incremental updates. Per-stock trade-date tables (`limit_price`, `moneyflow`, `margin`, `stock_connect_hold`) accept `--update`: each existing file is extended from its max `trade_date`, missing files are fetched in full. `daily_basic` has its own incremental command. Bringing everything to today therefore is:
 
 ```bash

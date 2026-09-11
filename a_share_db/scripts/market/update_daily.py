@@ -33,6 +33,7 @@ from a_share_db.constant.paths import (
     RAW_TUSHARE_DAILY_NONE_ROOT,
     STOCK_BASIC_PATH,
 )
+from a_share_db.utils.etl_common import DEFAULT_STOCK_STATUSES
 from a_share_db.utils.progress import ProgressReporter
 from a_share_db.scripts.market.build_adjusted_daily import (
     build_adjusted_daily,
@@ -92,6 +93,12 @@ def parse_args() -> argparse.Namespace:
         "--all-stocks",
         action="store_true",
         help="Update every listed stock in data/metadata/stock_basic.csv.",
+    )
+    parser.add_argument(
+        "--statuses",
+        nargs="+",
+        default=list(DEFAULT_STOCK_STATUSES),
+        help="Local stock_basic status values to include (listed delisted suspended approved, or all). Default: listed.",
     )
     parser.add_argument(
         "--stock-basic",
@@ -460,6 +467,7 @@ def run_update_daily(
     codes_file: Path | None = None,
     all_stocks: bool = False,
     stock_basic_path: Path = DEFAULT_STOCK_BASIC,
+    statuses: Iterable[str] = DEFAULT_STOCK_STATUSES,
     start_date: str | None = None,
     end_date: str | None = None,
     init_missing: bool = False,
@@ -512,7 +520,7 @@ def run_update_daily(
     backup_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
 
     try:
-        stock_basic = read_stock_basic(Path(stock_basic_path))
+        stock_basic = read_stock_basic(Path(stock_basic_path), statuses)
         selected_codes = load_requested_codes(codes, codes_file)
         stocks = select_stock_rows(stock_basic, selected_codes, all_stocks, limit_stocks)
         stock_count = len(stocks)
@@ -775,6 +783,7 @@ def main() -> int:
             codes_file=args.codes_file,
             all_stocks=args.all_stocks,
             stock_basic_path=args.stock_basic,
+            statuses=args.statuses,
             start_date=args.start_date,
             end_date=args.end_date,
             init_missing=args.init_missing,

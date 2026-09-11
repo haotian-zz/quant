@@ -30,6 +30,7 @@ from a_share_db.constant.paths import (
     STOCK_BASIC_PATH,
     build_data_backup_path,
 )
+from a_share_db.utils.etl_common import DEFAULT_STOCK_STATUSES, read_stock_basic as read_stock_basic_by_status
 from a_share_db.utils.progress import ProgressReporter
 from a_share_db.utils.provider_codes import build_tushare_ts_code
 
@@ -65,6 +66,12 @@ def parse_args() -> argparse.Namespace:
         "--all-stocks",
         action="store_true",
         help="Fetch every listed stock in data/metadata/stock_basic.csv.",
+    )
+    parser.add_argument(
+        "--statuses",
+        nargs="+",
+        default=list(DEFAULT_STOCK_STATUSES),
+        help="Local stock_basic status values to include (listed delisted suspended approved, or all). Default: listed.",
     )
     parser.add_argument(
         "--stock-basic",
@@ -179,19 +186,9 @@ def import_tushare():
     return ts
 
 
-def read_stock_basic(path: Path):
-    pd = import_pandas()
-    if not path.exists():
-        raise FileNotFoundError(f"Missing stock_basic file: {path}")
-    frame = pd.read_csv(path, dtype=str).fillna("")
-    required = {"code", "exchange"}
-    missing = required.difference(frame.columns)
-    if missing:
-        raise ValueError(f"stock_basic missing columns: {', '.join(sorted(missing))}")
-    if "status" in frame.columns:
-        # Adjustment factors follow the same stock selection rule as daily prices.
-        frame = frame[frame["status"].eq("listed")]
-    return frame
+def read_stock_basic(path: Path, statuses: Iterable[str] = DEFAULT_STOCK_STATUSES):
+    # Shared helper keeps the status filter identical across first- and second-generation scripts.
+    return read_stock_basic_by_status(path, statuses)
 
 
 def load_requested_codes(codes: Iterable[str] | None, codes_file: Path | None) -> list[str]:
@@ -398,6 +395,7 @@ def run_adj_factor_etl(
     codes_file: Path | None = None,
     all_stocks: bool = False,
     stock_basic_path: Path = DEFAULT_STOCK_BASIC,
+    statuses: Iterable[str] = DEFAULT_STOCK_STATUSES,
     start_date: str | None = None,
     end_date: str | None = None,
     output_root: Path = DEFAULT_OUTPUT_ROOT,
@@ -435,7 +433,7 @@ def run_adj_factor_etl(
         if retry_interval < 0:
             raise ValueError("retry-interval must be greater than or equal to 0.")
 
-        stock_basic = read_stock_basic(Path(stock_basic_path))
+        stock_basic = read_stock_basic(Path(stock_basic_path), statuses)
         selected_codes = load_requested_codes(codes, codes_file)
         stocks = select_stock_rows(stock_basic, selected_codes, all_stocks, limit_stocks)
         stock_count = len(stocks)
@@ -567,6 +565,7 @@ def main() -> int:
             codes_file=args.codes_file,
             all_stocks=args.all_stocks,
             stock_basic_path=args.stock_basic,
+            statuses=args.statuses,
             start_date=args.start_date,
             end_date=args.end_date,
             output_root=args.output_root,

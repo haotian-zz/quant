@@ -991,13 +991,16 @@ Tushare vip 接口会重复返回同一份报表，转换时按唯一键去重�
 Parquet：python3 a_share_db/scripts/warehouse/build_parquet.py --tables extended --resume
 ```
 
-增量更新策略（后续实现）：
+增量更新策略（已实现，统一入口 `scripts/workflows/refresh_all.py`，非交易日自动跳过）：
 
 ```text
 per-date 表：从本地最大年份文件重拉当年即可（同 --resume 行为）。
 per-key 财务表：--resume 会自动重拉最近 400 天内结束的报告期。
-per-stock 表：与 update_daily 相同，按本地最大 trade_date+1 增量；当前先用 --resume 全量补齐。
+per-stock 表：--update 按本地最大 trade_date+1 增量合并（limit_price/moneyflow/margin/stock_connect_hold）；dividend/holder_number 无日期过滤，全量刷新。
 single 表：直接重跑全表。
+指数类 per-key 表：--update 全量重拉（文件小）。
+分钟表：fetch_minute --update 只读文件尾部取最后 bar_end_time，追加新 bar，不重写大文件。
+退市股：所有按股票循环的脚本支持 --statuses，默认 listed；--statuses delisted 回填退市股。
 ```
 
 ---

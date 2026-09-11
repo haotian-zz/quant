@@ -21,14 +21,9 @@ Completed second generation (built by `scripts/workflows/build_extended_history.
 
 ### P0: Operations
 
-1. One routine daily command
-   - Incremental paths exist (`update_daily_data.py`, `update_daily_basic.py`, `build_extended_history.py --update`); fold them into a single scheduled workflow with a trading-day check.
-
-2. Delisted stocks
-   - First-generation daily/adj_factor/daily_basic and the per-stock second-generation tables cover `status=listed` only. Backfill with `--statuses listed delisted` to remove survivorship bias in point-in-time universes.
-
-3. Bring the price layer current
-   - `daily/none`, `adj_factor` and `daily_basic` were last updated in May 2026; run `update_daily_data.py` and a `fetch_daily_basic.py` incremental.
+1. Schedule `scripts/workflows/refresh_all.py` (cron/launchd, weekday evenings). The command itself exists and skips non-trading days.
+2. Delisted stocks: all per-stock scripts accept `--statuses`; price layer backfill for delisted stocks ran on 2026-09-10 (check `logs/build_20260910/10_delisted_price_layer.log`).
+3. Minute bars: `fetch_minute.py --update` appends to 1m/5m files; 15m/30m/60m and minute qfq/hfq should be derived locally from 1m + adj_factor rather than fetched (not implemented yet).
 
 ### P1: Data Quality
 

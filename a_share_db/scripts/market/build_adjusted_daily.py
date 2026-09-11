@@ -30,6 +30,7 @@ from a_share_db.constant.paths import (
     STOCK_BASIC_PATH,
     build_data_backup_path,
 )
+from a_share_db.utils.etl_common import DEFAULT_STOCK_STATUSES, read_stock_basic as read_stock_basic_by_status
 from a_share_db.utils.progress import ProgressReporter
 
 
@@ -61,6 +62,12 @@ def parse_args() -> argparse.Namespace:
         "--all-stocks",
         action="store_true",
         help="Build every listed stock in data/metadata/stock_basic.csv.",
+    )
+    parser.add_argument(
+        "--statuses",
+        nargs="+",
+        default=list(DEFAULT_STOCK_STATUSES),
+        help="Local stock_basic status values to include (listed delisted suspended approved, or all). Default: listed.",
     )
     parser.add_argument(
         "--stock-basic",
@@ -149,19 +156,9 @@ def import_pandas():
     return pd
 
 
-def read_stock_basic(path: Path):
-    pd = import_pandas()
-    if not path.exists():
-        raise FileNotFoundError(f"Missing stock_basic file: {path}")
-    frame = pd.read_csv(path, dtype=str).fillna("")
-    required = {"code"}
-    missing = required.difference(frame.columns)
-    if missing:
-        raise ValueError(f"stock_basic missing columns: {', '.join(sorted(missing))}")
-    if "status" in frame.columns:
-        # Adjusted tables are built for listed stocks by default.
-        frame = frame[frame["status"].eq("listed")]
-    return frame
+def read_stock_basic(path: Path, statuses: Iterable[str] = DEFAULT_STOCK_STATUSES):
+    # Shared helper keeps the status filter identical across first- and second-generation scripts.
+    return read_stock_basic_by_status(path, statuses)
 
 
 def load_requested_codes(codes: Iterable[str] | None, codes_file: Path | None) -> list[str]:
@@ -349,6 +346,7 @@ def run_build_adjusted_daily(
     codes_file: Path | None = None,
     all_stocks: bool = False,
     stock_basic_path: Path = DEFAULT_STOCK_BASIC,
+    statuses: Iterable[str] = DEFAULT_STOCK_STATUSES,
     adjust_types: Iterable[str] = ADJUSTED_TYPES,
     none_root: Path = DEFAULT_NONE_ROOT,
     adj_factor_root: Path = DEFAULT_ADJ_FACTOR_ROOT,
@@ -374,7 +372,7 @@ def run_build_adjusted_daily(
     failures = []
 
     try:
-        stock_basic = read_stock_basic(Path(stock_basic_path))
+        stock_basic = read_stock_basic(Path(stock_basic_path), statuses)
         requested_codes = load_requested_codes(codes, codes_file)
         selected_codes = select_codes(stock_basic, requested_codes, all_stocks, limit_stocks)
         stock_count = len(selected_codes)
@@ -459,6 +457,7 @@ def main() -> int:
             codes_file=args.codes_file,
             all_stocks=args.all_stocks,
             stock_basic_path=args.stock_basic,
+            statuses=args.statuses,
             adjust_types=args.adjust_types,
             none_root=args.none_root,
             adj_factor_root=args.adj_factor_root,
