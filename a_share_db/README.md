@@ -268,6 +268,7 @@ python3 a_share_db/scripts/workflows/build_extended_history.py --groups metadata
 | `financial` | fundamental factors with announce dates for point-in-time joins | income, balance_sheet, cash_flow, indicator, forecast, express, disclosure_date, top10_holders, top10_float_holders |
 | `stock` | tradability and flow factors, per stock | limit_price, moneyflow, margin, stock_connect_hold, dividend, holder_number |
 | `daily` | suspension/ST filters and event studies, per trade date | suspend, st_stock, dragon_tiger_list, dragon_tiger_inst, block_trade, limit_list |
+| `futures` (separate script) | hedging cost and basis for market-neutral strategies | futures_basic, futures_daily, futures_main_mapping |
 
 All second-generation scripts share `a_share_db/utils/etl_common.py` (pagination, conversion, atomic writes, logging), `a_share_db/utils/etl_runners.py` (per-stock / per-date / per-key / single-table loops) and `a_share_db/utils/cli.py` (common flags). A new table therefore needs only a constant module with the provider-to-local field map plus a ~100 line script.
 
@@ -811,13 +812,17 @@ python3 a_share_db/scripts/macro/fetch_macro.py --dry-run
 Routine refresh in one command (skips non-trading days unless `--force`; schedule it every evening):
 
 ```bash
-python3 a_share_db/scripts/workflows/refresh_all.py                 # prices, daily_basic, extended tables, 1m/5m minute bars, Parquet
+python3 a_share_db/scripts/workflows/refresh_all.py                 # prices, daily_basic, extended tables, futures, 1m/5m bars, 15m/30m/60m, Parquet
 python3 a_share_db/scripts/workflows/refresh_all.py --skip-minute   # same without minute bars
 ```
 
 Stock selection on every per-stock script (first and second generation) accepts `--statuses`; the default is `listed`, and `--statuses delisted` backfills delisted stocks so point-in-time universes are free of survivorship bias.
 
 Minute bars are updated in place with `fetch_minute.py --update`: the last `bar_end_time` is read from the tail of each file and only newer bars are appended, so a daily update does not rewrite hundreds of gigabytes.
+
+Stock index futures (CFFEX IF/IH/IC/IM) live in `metadata/futures_basic.csv`, `market_data/futures_daily/{contract_code}.csv` (every contract plus the continuous series `IF.CFX` ...) and `market_data/futures_main_mapping.csv`; basis is computed from `index_daily` on demand. Routine refreshes use `fetch_futures.py --active-only`.
+
+Coarser minute bars are derived locally, never fetched: `build_minute_derived.py` resamples 5m bars into 15m/30m/60m and scales prices by `adj_factor` for `qfq`/`hfq` (volume and amount stay raw, as in the daily builder). `--update` appends new days to none/hfq files; `qfq` files are rebuilt in full when needed. 1m/5m are kept unadjusted only; adjust them on the fly with `adj_factor`.
 
 Incremental updates. Per-stock trade-date tables (`limit_price`, `moneyflow`, `margin`, `stock_connect_hold`) accept `--update`: each existing file is extended from its max `trade_date`, missing files are fetched in full. `daily_basic` has its own incremental command. Bringing everything to today therefore is:
 

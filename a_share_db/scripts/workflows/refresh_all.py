@@ -5,8 +5,10 @@ Steps, in order:
 1. daily/none, adj_factor and hfq            (update_daily_data)
 2. daily_basic                               (update_daily_basic)
 3. every second-generation table             (build_extended_history --update)
-4. minute bars, optional                     (fetch_minute --update)
-5. Parquet for everything except minute      (build_parquet)
+4. stock index futures                       (fetch_futures, active contracts + continuous series)
+5. minute bars, optional                     (fetch_minute --update)
+6. 15m/30m/60m none/hfq from 5m, optional    (build_minute_derived --update; qfq needs a full rebuild)
+7. Parquet for everything except minute      (build_parquet)
 
 The command exits early on non-trading days unless --force is given, so it
 can be scheduled every evening with cron or launchd. Each step continues after
@@ -28,7 +30,10 @@ if str(PACKAGE_ROOT) not in sys.path:
 
 from a_share_db.constant.commands import DEFAULT_MAX_RETRIES, DEFAULT_PROGRESS_EVERY, DEFAULT_REQUEST_INTERVAL, DEFAULT_RETRY_INTERVAL
 from a_share_db.constant.minute import MINUTE_FREQUENCIES
-from a_share_db.constant.paths import TRADE_CALENDAR_PATH
+from a_share_db.constant.futures import DEFAULT_INDEX_FUTURES_PRODUCTS
+from a_share_db.constant.paths import FUTURES_BASIC_PATH, TRADE_CALENDAR_PATH
+from a_share_db.scripts.futures.fetch_futures import load_contract_codes, run_futures_basic_etl, run_futures_daily_etl, run_futures_mapping_etl
+from a_share_db.scripts.market.build_minute_derived import run_build_minute_derived
 from a_share_db.scripts.market.fetch_minute import run_minute_etl
 from a_share_db.scripts.market.update_daily import run_update_daily
 from a_share_db.scripts.market.update_daily_basic import run_update_daily_basic
@@ -37,7 +42,7 @@ from a_share_db.scripts.workflows import build_extended_history
 from a_share_db.utils.etl_common import parse_date_arg, read_trading_days
 
 
-PARQUET_TABLES_FOR_REFRESH = ["metadata", "daily", "adj_factor", "daily_basic", "extended"]
+PARQUET_TABLES_FOR_REFRESH = ["metadata", "daily", "adj_factor", "daily_basic", "extended", "futures"]
 
 
 def parse_args() -> argparse.Namespace:
@@ -82,6 +87,7 @@ def main() -> int:
         ("update_daily_basic", lambda: run_update_daily_basic(args.token, all_stocks=True, end_date=args.end_date, **loop)),
         ("extended_tables", lambda: run_extended_update(args)),
     ]
+    steps.append(("futures", lambda: run_futures_refresh(args, loop)))
     if not args.skip_minute:
         steps.append(
             (
@@ -94,6 +100,21 @@ def main() -> int:
                     end_date=args.end_date,
                     update=True,
                     **loop,
+                ),
+            )
+        )
+    if not args.skip_minute and "5m" in args.minute_frequencies:
+        steps.append(
+            (
+                "minute_derived",
+                lambda: run_build_minute_derived(
+                    all_stocks=True,
+                    source_frequency="5m",
+                    frequencies=["15m", "30m", "60m"],
+                    adjust_types=["none", "hfq"],
+                    incremental=True,
+                    dry_run=args.dry_run,
+                    progress_every=args.progress_every,
                 ),
             )
         )
@@ -121,6 +142,23 @@ def main() -> int:
         return 1
     print(f"Refresh through {args.end_date} completed.")
     return 0
+
+
+def run_futures_refresh(args: argparse.Namespace, loop: dict):
+    """Refresh contract master, main-contract mapping, and quotes of contracts still trading."""
+    single = {key: loop[key] for key in ("dry_run", "max_retries", "retry_interval")}
+    results = [
+        run_futures_basic_etl(args.token, **single),
+        run_futures_mapping_etl(args.token, end_date=args.end_date, **single),
+        run_futures_daily_etl(
+            args.token,
+            load_contract_codes(FUTURES_BASIC_PATH, DEFAULT_INDEX_FUTURES_PRODUCTS, args.end_date),
+            end_date=args.end_date,
+            **loop,
+        ),
+    ]
+    failed = [r for r in results if r.get("status") != "success"]
+    return {"status": "success" if not failed else "partial", "error_message": "; ".join(r.get("error_message", "") for r in failed)}
 
 
 def run_extended_update(args: argparse.Namespace):

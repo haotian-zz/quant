@@ -972,6 +972,27 @@ Tushare vip 接口会重复返回同一份报表，转换时按唯一键去重�
 三大报表与财务指标共约 450 个字段，本地字段名的映射见 constant/financial.py，不在此逐一列出。
 ```
 
+### 3.14b 股指期货表
+
+| 表 | 文件 | 唯一键 | 来源 |
+| -- | ---- | ------ | ---- |
+| 合约信息 | `metadata/futures_basic.csv` | contract_code | `fut_basic` CFFEX，仅 IF/IH/IC/IM |
+| 合约日线 | `market_data/futures_daily/{contract_code}.csv` | contract_code + trade_date | `fut_daily`；每个合约 + 主力连续 `IF.CFX` 等；amount 万元 -> 元 |
+| 主力合约映射 | `market_data/futures_main_mapping.csv` | continuous_code + trade_date | `fut_mapping` |
+
+合约代码沿用 Wind 风格 `IF2609.CFX`；基差不落表，用 `index_daily` 与连续合约现算。日常刷新用 `--active-only` 只重拉未到期合约。
+
+### 3.6b 本地派生分钟表
+
+`build_minute_derived.py` 从本地 5m 未复权数据聚合 15m/30m/60m，并按交易日复权因子生成 qfq/hfq：
+
+```text
+桶边界按交易时段计算：上午 09:30-11:30、下午 13:00-15:00，bar_end_time 落在 09:45…11:30、13:15…15:00。
+open=first, high=max, low=min, close=last, volume/amount=sum；复权只调价格，不调量（与日线一致）。
+1m/5m 只保留 none；需要时用 adj_factor 现场复权。
+--update 只读源文件尾部，按整天追加 none/hfq；qfq 依赖最新因子，需全量重建。
+```
+
 ### 3.15 宏观表
 
 | 表 | 文件 | 唯一键 | 来源 |

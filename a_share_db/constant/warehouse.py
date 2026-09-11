@@ -15,6 +15,7 @@ PARQUET_METADATA_FILES = ["stock_basic", "trade_calendar"]
 # ---------------------------------------------------------------------------
 from a_share_db.constant import paths as _paths
 from a_share_db.constant.events import BLOCK_TRADE_COLUMNS, DRAGON_TIGER_INST_COLUMNS, DRAGON_TIGER_LIST_COLUMNS, LIMIT_LIST_COLUMNS
+from a_share_db.constant.futures import FUTURES_BASIC_COLUMNS, FUTURES_DAILY_COLUMNS, FUTURES_MAIN_MAPPING_COLUMNS
 from a_share_db.constant.financial import (
     BALANCE_SHEET_COLUMNS,
     CASH_FLOW_COLUMNS,
@@ -95,6 +96,10 @@ EXTENDED_PARQUET_TABLES = {
     "holder_number": _spec("dir", HOLDER_NUMBER_COLUMNS, {"code"}, {"announce_date", "report_period"}, _paths.HOLDER_NUMBER_ROOT, _paths.PARQUET_FINANCIAL_ROOT / "holder_number"),
     "top10_holders": _spec("dir", TOP10_HOLDER_COLUMNS, {"code", "holder_name", "holder_type"}, {"announce_date", "report_period"}, _paths.TOP10_HOLDERS_ROOT, _paths.PARQUET_FINANCIAL_ROOT / "top10_holders", key="period"),
     "top10_float_holders": _spec("dir", TOP10_HOLDER_COLUMNS, {"code", "holder_name", "holder_type"}, {"announce_date", "report_period"}, _paths.TOP10_FLOAT_HOLDERS_ROOT, _paths.PARQUET_FINANCIAL_ROOT / "top10_float_holders", key="period"),
+    # futures
+    "futures_basic": _spec("file", FUTURES_BASIC_COLUMNS, set(FUTURES_BASIC_COLUMNS) - {"multiplier", "per_unit", "list_date", "delist_date", "last_delivery_date"}, {"list_date", "delist_date", "last_delivery_date"}, _paths.FUTURES_BASIC_PATH, _paths.PARQUET_METADATA_ROOT / "futures_basic.parquet"),
+    "futures_daily": _spec("dir", FUTURES_DAILY_COLUMNS, {"contract_code"}, {"trade_date"}, _paths.FUTURES_DAILY_ROOT, _paths.PARQUET_ROOT / "futures_daily", key="index"),
+    "futures_main_mapping": _spec("file", FUTURES_MAIN_MAPPING_COLUMNS, {"continuous_code", "contract_code"}, {"trade_date"}, _paths.FUTURES_MAIN_MAPPING_PATH, _paths.PARQUET_ROOT / "futures_main_mapping.parquet"),
     # macro
     "shibor": _spec("file", SHIBOR_COLUMNS, set(), {"rate_date"}, _paths.SHIBOR_PATH, _paths.PARQUET_MACRO_ROOT / "shibor.parquet"),
     "gdp": _spec("file", GDP_COLUMNS, {"quarter"}, set(), _paths.GDP_PATH, _paths.PARQUET_MACRO_ROOT / "gdp.parquet"),
@@ -108,4 +113,5 @@ PARQUET_TABLE_GROUPS = {
     "extended": list(EXTENDED_PARQUET_TABLES),
     "financial": ["income", "balance_sheet", "cash_flow", "indicator", "forecast", "express", "disclosure_date", "dividend", "holder_number", "top10_holders", "top10_float_holders"],
     "macro": ["shibor", "gdp", "cpi", "ppi", "money_supply"],
+    "futures": ["futures_basic", "futures_daily", "futures_main_mapping"],
 }

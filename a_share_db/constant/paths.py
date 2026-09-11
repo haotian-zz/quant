@@ -144,6 +144,10 @@ CPI_PATH = MACRO_ROOT / "cpi.csv"
 PPI_PATH = MACRO_ROOT / "ppi.csv"
 MONEY_SUPPLY_PATH = MACRO_ROOT / "money_supply.csv"
 
+FUTURES_BASIC_PATH = METADATA_ROOT / "futures_basic.csv"
+FUTURES_DAILY_ROOT = MARKET_DATA_ROOT / "futures_daily"
+FUTURES_MAIN_MAPPING_PATH = MARKET_DATA_ROOT / "futures_main_mapping.csv"
+
 RAW_TUSHARE_ROOT = RAW_ROOT / "tushare"
 PARQUET_FINANCIAL_ROOT = PARQUET_ROOT / "financial"
 PARQUET_MACRO_ROOT = PARQUET_ROOT / "macro"
