@@ -292,6 +292,37 @@ python3 a_share_db/scripts/warehouse/build_parquet.py --tables extended --resume
 
 `--tables all` now includes the extended tables; `financial` and `macro` are group shortcuts.
 
+## Registered Tables (Tier 1 and Tier 2)
+
+Beyond the hand-written scripts, 54 further Tushare tables are described declaratively in `a_share_db/constant/table_registry.py` and fetched by one generic runner:
+
+```bash
+python3 a_share_db/scripts/warehouse/fetch_tables.py --list                       # every registered table with layout and output path
+python3 a_share_db/scripts/warehouse/fetch_tables.py --tiers 1 2 --resume         # full history build
+python3 a_share_db/scripts/warehouse/fetch_tables.py --groups fund --update       # incremental refresh of one group
+python3 a_share_db/scripts/warehouse/fetch_tables.py --tables broker_report --start-date 20240101 --dry-run
+```
+
+A registry entry names the provider API, the provider-to-local field map (kept in the domain constant module), the storage layout and the fetch strategy; `constant/warehouse.py` derives the Parquet spec from the same entry, so `build_parquet.py --tables registry` covers all of them.
+
+| Group | Tables | Notes |
+| ----- | ------ | ----- |
+| research | broker_report, institution_survey, broker_recommend | broker forecasts (营收/净利 万元 -> 元) from 2006; surveys from 2023; golden stocks from 2022 |
+| financial | audit, main_business, fund_portfolio | per report period; main_business carries product/region/industry rows |
+| equity_events | share_float, holder_trade, repurchase, manager (per year), pledge, manager_reward (per stock) | share_float windows filter the unlock date and include future years |
+| fund | fund_basic, fund_daily, fund_nav, fund_share, fund_adj, fund_dividend | per-fund series cover exchange-traded funds (market E) |
+| sector | dc_sector_daily, dc_sector_member, ths_index, ths_index_member, ths_index_daily, citic_industry_daily, global_index_daily, dc/ths industry and market money flow | Eastmoney sectors from 2024-12, Tonghuashun indices from 2014 |
+| option | option_basic, option_daily | SSE/SZSE ETF options and CFFEX index options from 2015-02 |
+| futures | futures_settle, futures_holding | margin rates, fees and member positions per contract |
+| market | auction_open, auction_close, chip_distribution, technical_factor, market_summary, sz_market_summary, southbound_daily, northbound_top10, southbound_top10 | technical_factor is the provider's 261-column indicator table |
+| sentiment | hot_money_list, hot_money_detail, ths_hot_list, dc_hot_list, limit_streak, limit_concept | short-horizon data, mostly 2023+ |
+| bond | convertible_bond_basic, convertible_bond_daily | |
+| macro | lpr, pmi, social_financing, us_treasury_yield, economic_calendar | economic_calendar is keyed by calendar day |
+
+Layouts and their refresh behaviour under `--update`: per_stock and per_key series extend from their last trade_date; per_date re-fetches the last year; per_period re-fetches recent periods; per_year re-fetches the current (and future) years; single tables are re-fetched in full. `refresh_all.py` runs this for every registered table (`--skip-registry` to omit).
+
+Not registered on purpose: `cyq_chips` (100 rows per stock per day, ~500k requests) and text feeds without permission (`news`, `anns_d`).
+
 ## Scripts
 
 ### `scripts/metadata/fetch_stock_basic.py`

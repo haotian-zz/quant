@@ -1003,6 +1003,21 @@ open=first, high=max, low=min, close=last, volume/amount=sum；复权只调价�
 | PPI | `macro/ppi.csv` | month | `cn_ppi` |
 | 货币供应量 | `macro/money_supply.csv` | month | `cn_m` |
 
+### 3.15b 注册表驱动的第三代表
+
+`constant/table_registry.py` 用声明式 spec 描述 54 张表（研报、审计/主营、股权事件、基金、板块/概念、期权、期货补充、竞价/筹码/技术因子、市场统计、情绪、可转债、宏观补充），`utils/table_runner.py` 按布局分派到 `etl_runners` 的通用循环，`scripts/warehouse/fetch_tables.py` 是唯一入口。字段映射仍放在各领域常量模块（`research.py`、`equity_events.py`、`fund.py`、`sector.py`、`option.py`、`auction.py`、`market_stats.py`、`sentiment.py`、`chips.py`、`convertible_bond.py`、`technical.py`，以及 `financial.py`/`futures.py`/`macro.py` 的追加部分）。
+
+| 布局 | 文件 | 增量 |
+| ---- | ---- | ---- |
+| single | `{table}.csv` | 全量重拉 |
+| per_stock | `{table}/{code}.csv` | 从本地最大 trade_date+1 追加 |
+| per_date | `{table}/{year}.csv`（交易日或自然日） | 重拉最后一年 |
+| per_key | `{table}/{key}.csv`（合约/基金/指数） | 从本地最大 trade_date+1 追加 |
+| per_period | `{table}/{period}.csv` | 重拉最近 400 天内的报告期 |
+| per_year | `{table}/{year}.csv`（按公告日/解禁日窗口分页） | 重拉当年及未来年份 |
+
+命名规则不变：本地字段语义、6 位股票代码；基金/期权/可转债/板块代码沿用 Wind 风格带后缀代码；万元/亿元/万股统一换算到元/股。`technical_factor` 的 261 列沿用"指标_复权_窗口"体系，仅把 provider 的 `bfq` 改为本仓库的 `none`。
+
 ### 3.16 第二代表的构建与增量
 
 ```text

@@ -19,12 +19,14 @@ Completed second generation (built by `scripts/workflows/build_extended_history.
 - Fundamentals by report period: income, balance sheet, cash flow, financial indicators, forecasts, express reports, disclosure dates, top-10 holders / float holders; per stock: dividends, shareholder counts
 - Macro: Shibor, GDP, CPI, PPI, money supply
 
+Completed third generation (registry-driven, `scripts/warehouse/fetch_tables.py --tiers 1 2`): broker research forecasts, audit opinions, main business composition, lock-up releases, insider trades, repurchases, pledges, managers and compensation, fund master/quotes/NAV/shares/holdings, Eastmoney and Tonghuashun sectors, CITIC and global indices, sector/market money flow, options, futures settlement and member positions, call auctions, chip distribution, provider technical factors, market summaries, Stock Connect leaderboards, hot money and hot lists, limit streaks, convertible bonds, LPR/PMI/social financing/US treasury/economic calendar.
+
 ### P0: Operations
 
 1. Schedule `scripts/workflows/refresh_all.py` (cron/launchd, weekday evenings). The command itself exists and skips non-trading days.
 2. Delisted stocks: all per-stock scripts accept `--statuses`; price layer backfill for delisted stocks ran on 2026-09-10 (check `logs/build_20260910/10_delisted_price_layer.log`).
 3. Minute bars: `fetch_minute.py --update` appends to 1m/5m; `build_minute_derived.py` builds 15m/30m/60m none/hfq/qfq from 5m (first full build queued after the 2026-09-10 minute update). qfq minute files need periodic full rebuilds (weekly is enough).
-4. Stock index futures added (`scripts/futures/fetch_futures.py`); options (`opt_daily`) and ETF daily (`fund_daily`) remain optional.
+4. Stock index futures, options and ETF series are in place; `cyq_chips` (per-stock per-day chip curves) is intentionally not fetched because it needs ~500k requests.
 
 ### P1: Data Quality
 

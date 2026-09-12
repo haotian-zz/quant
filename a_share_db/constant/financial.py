@@ -693,3 +693,35 @@ TUSHARE_BULK_STATEMENT_APIS = {
     "forecast": "forecast_vip",
     "express": "express_vip",
 }
+
+
+# ---------------------------------------------------------------------------
+# Audit opinions (fina_audit_vip) and main business composition (fina_mainbz_vip)
+# ---------------------------------------------------------------------------
+TUSHARE_AUDIT_FIELD_MAP = {
+    "ts_code": "code",
+    "ann_date": "announce_date",
+    "end_date": "report_period",
+    "audit_result": "audit_opinion",
+    "audit_fees": "audit_fees",
+    "audit_agency": "audit_firm",
+    "audit_sign": "audit_signer",
+}
+TUSHARE_AUDIT_FIELDS = list(TUSHARE_AUDIT_FIELD_MAP.keys())
+AUDIT_COLUMNS = list(TUSHARE_AUDIT_FIELD_MAP.values()) + ["update_time"]
+
+TUSHARE_MAIN_BUSINESS_FIELD_MAP = {
+    "ts_code": "code",
+    "end_date": "report_period",
+    "bz_item": "business_item",
+    "bz_code": "business_code",
+    "bz_sales": "business_revenue",
+    "bz_profit": "business_profit",
+    "bz_cost": "business_cost",
+    "curr_type": "currency",
+}
+TUSHARE_MAIN_BUSINESS_FIELDS = list(TUSHARE_MAIN_BUSINESS_FIELD_MAP.keys())
+# business_type is added locally from the request parameter: product / region / industry.
+MAIN_BUSINESS_COLUMNS = list(TUSHARE_MAIN_BUSINESS_FIELD_MAP.values()) + ["business_type", "update_time"]
+TUSHARE_MAIN_BUSINESS_TYPES = {"P": "product", "D": "region", "I": "industry"}
+MAIN_BUSINESS_PAGE_SIZE = 5000

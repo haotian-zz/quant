@@ -115,3 +115,23 @@ PARQUET_TABLE_GROUPS = {
     "macro": ["shibor", "gdp", "cpi", "ppi", "money_supply"],
     "futures": ["futures_basic", "futures_daily", "futures_main_mapping"],
 }
+
+
+# Tables from the declarative registry share the same Parquet contract.
+from a_share_db.constant.table_registry import TABLE_SPECS as _TABLE_SPECS
+
+for _name, _table in _TABLE_SPECS.items():
+    EXTENDED_PARQUET_TABLES[_name] = _spec(
+        "file" if _table["layout"] == "single" else "dir",
+        _table["columns"],
+        _table["text_columns"],
+        _table["date_columns"],
+        _table["csv"],
+        _table["parquet"],
+        key=_table["parquet_key"],
+    )
+    PARQUET_TABLE_GROUPS.setdefault(_table["group"], [])
+    if _name not in PARQUET_TABLE_GROUPS[_table["group"]]:
+        PARQUET_TABLE_GROUPS[_table["group"]].append(_name)
+PARQUET_TABLE_GROUPS["extended"] = list(EXTENDED_PARQUET_TABLES)
+PARQUET_TABLE_GROUPS["registry"] = list(_TABLE_SPECS)

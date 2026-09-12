@@ -64,3 +64,33 @@ TUSHARE_FUTURES_TYPE_FUTURES = "1"
 DEFAULT_INDEX_FUTURES_PRODUCTS = ["IF", "IH", "IC", "IM"]
 DEFAULT_CONTINUOUS_CONTRACT_CODES = [f"{product}.CFX" for product in DEFAULT_INDEX_FUTURES_PRODUCTS]
 DEFAULT_FUTURES_START_DATE = "20100416"
+
+# Settlement parameters (fut_settle): margin rates and fees per contract per day.
+TUSHARE_FUTURES_SETTLE_FIELD_MAP = {
+    "ts_code": "contract_code",
+    "trade_date": "trade_date",
+    "settle": "settle",
+    "trading_fee_rate": "trading_fee_rate",
+    "trading_fee": "trading_fee",
+    "delivery_fee": "delivery_fee",
+    "b_hedging_margin_rate": "buy_hedging_margin_rate",
+    "s_hedging_margin_rate": "sell_hedging_margin_rate",
+    "long_margin_rate": "long_margin_rate",
+    "short_margin_rate": "short_margin_rate",
+}
+FUTURES_SETTLE_COLUMNS = list(TUSHARE_FUTURES_SETTLE_FIELD_MAP.values()) + ["update_time"]
+
+# Member position ranking (fut_holding), keyed by symbol without exchange suffix.
+TUSHARE_FUTURES_HOLDING_FIELD_MAP = {
+    "trade_date": "trade_date",
+    "symbol": "symbol",
+    "broker": "broker",
+    "vol": "volume",
+    "vol_chg": "volume_change",
+    "long_hld": "long_holding",
+    "long_chg": "long_change",
+    "short_hld": "short_holding",
+    "short_chg": "short_change",
+}
+FUTURES_HOLDING_COLUMNS = ["contract_code"] + list(TUSHARE_FUTURES_HOLDING_FIELD_MAP.values()) + ["update_time"]
+FUTURES_HOLDING_PAGE_SIZE = 4000

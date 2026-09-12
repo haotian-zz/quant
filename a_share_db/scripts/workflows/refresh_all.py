@@ -6,9 +6,10 @@ Steps, in order:
 2. daily_basic                               (update_daily_basic)
 3. every second-generation table             (build_extended_history --update)
 4. stock index futures                       (fetch_futures, active contracts + continuous series)
-5. minute bars, optional                     (fetch_minute --update)
-6. 15m/30m/60m none/hfq from 5m, optional    (build_minute_derived --update; qfq needs a full rebuild)
-7. Parquet for everything except minute      (build_parquet)
+5. registered tier-1/tier-2 tables           (table_runner, update mode; --skip-registry to omit)
+6. minute bars, optional                     (fetch_minute --update)
+7. 15m/30m/60m none/hfq from 5m, optional    (build_minute_derived --update; qfq needs a full rebuild)
+8. Parquet for everything except minute      (build_parquet)
 
 The command exits early on non-trading days unless --force is given, so it
 can be scheduled every evening with cron or launchd. Each step continues after
@@ -32,6 +33,8 @@ from a_share_db.constant.commands import DEFAULT_MAX_RETRIES, DEFAULT_PROGRESS_E
 from a_share_db.constant.minute import MINUTE_FREQUENCIES
 from a_share_db.constant.futures import DEFAULT_INDEX_FUTURES_PRODUCTS
 from a_share_db.constant.paths import FUTURES_BASIC_PATH, TRADE_CALENDAR_PATH
+from a_share_db.constant.table_registry import TIER_ONE_TABLES, TIER_TWO_TABLES
+from a_share_db.utils.table_runner import run_registered_table
 from a_share_db.scripts.futures.fetch_futures import load_contract_codes, run_futures_basic_etl, run_futures_daily_etl, run_futures_mapping_etl
 from a_share_db.scripts.market.build_minute_derived import run_build_minute_derived
 from a_share_db.scripts.market.fetch_minute import run_minute_etl
@@ -42,7 +45,7 @@ from a_share_db.scripts.workflows import build_extended_history
 from a_share_db.utils.etl_common import parse_date_arg, read_trading_days
 
 
-PARQUET_TABLES_FOR_REFRESH = ["metadata", "daily", "adj_factor", "daily_basic", "extended", "futures"]
+PARQUET_TABLES_FOR_REFRESH = ["metadata", "daily", "adj_factor", "daily_basic", "extended", "futures", "registry"]
 
 
 def parse_args() -> argparse.Namespace:
@@ -53,6 +56,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-minute", action="store_true", help="Do not update minute bars.")
     parser.add_argument("--minute-frequencies", nargs="+", choices=MINUTE_FREQUENCIES, default=["1m", "5m"], help="Minute frequencies to update. Default: 1m 5m.")
     parser.add_argument("--skip-parquet", action="store_true", help="Do not rebuild Parquet.")
+    parser.add_argument("--skip-registry", action="store_true", help="Do not update the registered tier-1/tier-2 tables.")
+    parser.add_argument("--registry-tables", nargs="+", default=TIER_ONE_TABLES + TIER_TWO_TABLES, help="Registered tables to update. Default: every tier-1 and tier-2 table.")
     parser.add_argument("--dry-run", action="store_true", help="Fetch and convert data, but do not write CSV files or logs.")
     parser.add_argument("--request-interval", type=float, default=DEFAULT_REQUEST_INTERVAL, help=f"Seconds between provider requests. Default: {DEFAULT_REQUEST_INTERVAL}.")
     parser.add_argument("--progress-every", type=int, default=DEFAULT_PROGRESS_EVERY, help=f"Print progress every N items. Default: {DEFAULT_PROGRESS_EVERY}.")
@@ -88,6 +93,8 @@ def main() -> int:
         ("extended_tables", lambda: run_extended_update(args)),
     ]
     steps.append(("futures", lambda: run_futures_refresh(args, loop)))
+    if not args.skip_registry:
+        steps.append(("registered_tables", lambda: run_registry_refresh(args, loop)))
     if not args.skip_minute:
         steps.append(
             (
@@ -142,6 +149,24 @@ def main() -> int:
         return 1
     print(f"Refresh through {args.end_date} completed.")
     return 0
+
+
+def run_registry_refresh(args: argparse.Namespace, loop: dict):
+    """Update every registered table: incremental where the layout allows, otherwise re-fetch the moving part."""
+    failed = []
+    for name in args.registry_tables:
+        try:
+            result = run_registered_table(
+                name, args.token, end_date=args.end_date, update=True, resume=True,
+                stock_kwargs={"all_stocks": True, "statuses": ["listed", "delisted"]}, **loop,
+            )
+        except Exception as exc:
+            failed.append(f"{name}: {exc}")
+            continue
+        print(f"[{datetime.now():%H:%M:%S}]   {name} {result.get('status')} rows={result.get('row_count', 0)}", flush=True)
+        if result.get("status") != "success":
+            failed.append(f"{name}: {result.get('error_message', '')[:120]}")
+    return {"status": "success" if not failed else "partial", "error_message": "; ".join(failed)}
 
 
 def run_futures_refresh(args: argparse.Namespace, loop: dict):

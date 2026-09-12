@@ -280,6 +280,7 @@ def run_per_date_etl(
     retry_interval: float = DEFAULT_RETRY_INTERVAL,
     stop_on_error: bool = False,
     progress_label: str | None = None,
+    calendar_days: bool = False,
 ) -> dict:
     """Fetch a provider table by trade_date and write data/.../{year}.csv files.
 
@@ -303,7 +304,11 @@ def run_per_date_etl(
         requested_end = parse_date_arg(end_date) or datetime.now().date()
         if requested_start is None:
             raise ValueError("start-date is required for per-date fetches.")
-        days = read_trading_days(Path(trade_calendar_path), requested_start, requested_end, calendar_exchange)
+        if calendar_days:
+            # Some tables (economic calendar) are keyed by calendar date, not trading day.
+            days = [requested_start + timedelta(days=offset) for offset in range((requested_end - requested_start).days + 1)]
+        else:
+            days = read_trading_days(Path(trade_calendar_path), requested_start, requested_end, calendar_exchange)
         if limit_days is not None:
             if limit_days < 0:
                 raise ValueError("limit-days must be greater than or equal to 0.")
@@ -450,33 +455,53 @@ def run_per_key_etl(
     retry_interval: float = DEFAULT_RETRY_INTERVAL,
     stop_on_error: bool = False,
     progress_label: str | None = None,
+    incremental: bool = False,
+    columns: list[str] | None = None,
+    merge_keys: list[str] | None = None,
+    date_column: str = "trade_date",
 ) -> dict:
     """Fetch one file per arbitrary key (index code, report period, ...).
 
-    fetch_fn(pro, key) -> raw DataFrame
+    fetch_fn(pro, key) -> raw DataFrame   (with incremental=True: fetch_fn(pro, key, start_yyyymmdd))
     convert_fn(raw, key) -> formal DataFrame
     output_path_fn(key) -> Path
     resume_skip_fn(key, path) -> bool, optional override of the resume rule
+    keys may be a callable receiving the provider client, for key lists that
+    themselves come from the provider.
     """
     if not token:
         raise ValueError("Tushare token is required.")
     run = EtlRun(job_name, log_path, write_log, dry_run, backup_root)
-    keys = list(keys)
     try:
         _validate_intervals(request_interval, retry_interval)
         pro = get_tushare_pro(token)
+        keys = list(keys(pro) if callable(keys) else keys)
         progress = ProgressReporter(len(keys), every=progress_every, label=progress_label or f"Fetch {job_name}")
         for index, key in enumerate(keys, start=1):
             output_path = Path(output_path_fn(key))
             try:
-                skip = resume_skip_fn(key, output_path) if resume_skip_fn else _file_is_complete(output_path)
-                if resume and skip:
+                existing = None
+                if incremental and columns and _file_is_complete(output_path):
+                    existing = read_existing_csv(output_path, columns, string_columns=tuple(merge_keys or []) + (date_column,))
+                elif resume and (resume_skip_fn(key, output_path) if resume_skip_fn else _file_is_complete(output_path)):
                     run.skipped_count += 1
                     continue
-                raw = retry_call(lambda: fetch_fn(pro, key), max_retries=max_retries, retry_interval=retry_interval)
+                if existing is not None and not existing.empty:
+                    # Extend the file from the day after its last row.
+                    next_day = parse_date_arg(existing[date_column].dropna().astype(str).max()) + timedelta(days=1)
+                    raw = retry_call(lambda: fetch_fn(pro, key, next_day.strftime("%Y%m%d")), max_retries=max_retries, retry_interval=retry_interval)
+                else:
+                    raw = retry_call(lambda: fetch_fn(pro, key), max_retries=max_retries, retry_interval=retry_interval)
                 normalized = convert_fn(raw, key)
                 run.row_count += len(normalized)
-                run.write(normalized, output_path, create_backup)
+                if existing is not None:
+                    merged = merge_rows(existing, normalized, columns, list(merge_keys or [date_column]))
+                    if len(merged) > len(existing):
+                        run.write(merged, output_path, create_backup)
+                    else:
+                        run.skipped_count += 1
+                else:
+                    run.write(normalized, output_path, create_backup)
                 if write_raw and raw_output_path_fn is not None and not raw.empty:
                     run.write(raw, Path(raw_output_path_fn(key)), create_backup)
                 if request_interval:
