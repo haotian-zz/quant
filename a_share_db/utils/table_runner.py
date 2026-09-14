@@ -67,6 +67,17 @@ def _fetch_pages(pro, spec: dict, request_interval: float, **params):
     )
 
 
+def _fetch_window_by_day(pro, spec: dict, request_interval: float, params: dict, window_start: str, window_end: str):
+    pd = import_pandas()
+    frames = []
+    for day_start, day_end in iter_date_windows(window_start, window_end, 1):
+        day_params = {**params, spec["range_params"][0]: day_start, spec["range_params"][1]: day_end}
+        frames.append(_fetch_pages(pro, spec, request_interval, **day_params))
+        if request_interval:
+            time.sleep(request_interval)
+    return pd.concat(frames, ignore_index=True) if frames else None
+
+
 def _param_loops(spec: dict) -> list[dict]:
     loops = spec["param_loops"] or [{"params": {}}]
     return [{"params": dict(loop.get("params", {})), "constants": dict(loop.get("constants", {}))} for loop in loops]
@@ -82,7 +93,14 @@ def _fetch_and_convert(pro, spec: dict, request_interval: float, base_params: di
             if window_start or window_end:
                 params[spec["range_params"][0]] = window_start
                 params[spec["range_params"][1]] = window_end
-            raw = _fetch_pages(pro, spec, request_interval, **params)
+            try:
+                raw = _fetch_pages(pro, spec, request_interval, **params)
+            except Exception:
+                # The provider rejects very deep offsets (about 100k rows per query).
+                # A window that dense is re-fetched one calendar day at a time.
+                if not (window_start and window_end and window_start != window_end):
+                    raise
+                raw = _fetch_window_by_day(pro, spec, request_interval, params, window_start, window_end)
             frames.append(convert_spec_frame(spec, raw, loop["constants"]))
             if request_interval:
                 time.sleep(request_interval)

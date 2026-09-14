@@ -281,7 +281,9 @@ def schema_name_for_job(table: str, path: Path) -> str:
 
 def validate_and_order_columns(frame, schema_name: str, path: Path):
     expected = SCHEMA_COLUMNS[schema_name]
-    provider_columns = sorted(PROVIDER_ONLY_COLUMNS.intersection(frame.columns))
+    # A name in the provider-only list is fine when the table's own schema declares it
+    # (for example the contract symbol of options and futures positions).
+    provider_columns = sorted(PROVIDER_ONLY_COLUMNS.intersection(frame.columns) - set(expected))
     if provider_columns:
         raise ValueError(
             "formal CSV contains provider-only columns: " + ", ".join(provider_columns)
