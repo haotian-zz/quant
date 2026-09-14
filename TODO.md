@@ -19,7 +19,7 @@ Completed second generation (built by `scripts/workflows/build_extended_history.
 - Fundamentals by report period: income, balance sheet, cash flow, financial indicators, forecasts, express reports, disclosure dates, top-10 holders / float holders; per stock: dividends, shareholder counts
 - Macro: Shibor, GDP, CPI, PPI, money supply
 
-Completed third generation (registry-driven, `scripts/warehouse/fetch_tables.py --tiers 1 2`): broker research forecasts, audit opinions, main business composition, lock-up releases, insider trades, repurchases, pledges, managers and compensation, fund master/quotes/NAV/shares/holdings, Eastmoney and Tonghuashun sectors, CITIC and global indices, sector/market money flow, options, futures settlement and member positions, call auctions, chip distribution, provider technical factors, market summaries, Stock Connect leaderboards, hot money and hot lists, limit streaks, convertible bonds, LPR/PMI/social financing/US treasury/economic calendar.
+Completed third generation on 2026-09-13 (registry-driven, `scripts/warehouse/fetch_tables.py --tiers 1 2`; 54 tables, 111M rows, Parquet built): broker research forecasts, audit opinions, main business composition, lock-up releases, insider trades, repurchases, pledges, managers and compensation, fund master/quotes/NAV/shares/holdings, Eastmoney and Tonghuashun sectors, CITIC and global indices, sector/market money flow, options, futures settlement and member positions, call auctions, chip distribution, provider technical factors, market summaries, Stock Connect leaderboards, hot money and hot lists, limit streaks, convertible bonds, LPR/PMI/social financing/US treasury/economic calendar.
 
 ### P0: Operations
 
