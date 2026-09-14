@@ -250,6 +250,7 @@ def _spec(
     end_offset_years: int = 0,
     code_fields: tuple | None = None,
     parquet_key: str | None = None,
+    date_filter: bool = True,
     note: str = "",
 ) -> dict:
     if code_fields is None:
@@ -280,6 +281,8 @@ def _spec(
         "key_constant": key_constant,
         "dedupe_keys": dedupe_keys,
         "end_offset_years": end_offset_years,
+        # Some interfaces treat start/end as an exact report-date match; skip the range for them.
+        "date_filter": date_filter,
         "code_fields": code_fields,
         "code_column": "code" if "code" in columns else None,
         "parquet_key": parquet_key or {"per_stock": "code", "per_date": "year", "per_period": "period", "per_year": "year", "per_key": "index"}.get(layout, "code"),
@@ -350,7 +353,7 @@ TABLE_SPECS: dict[str, dict] = {
     "pledge": _spec(
         "equity_events", "pledge_stat", TUSHARE_PLEDGE_FIELD_MAP, PLEDGE_COLUMNS, "per_stock",
         EVENTS / "pledge", PQ / "equity_events" / "pledge",
-        ["code", "stat_date"], {"code"}, {"stat_date"}, page_size=1000, scales=PLEDGE_SCALES, dedupe_keys=["code", "stat_date"],
+        ["code", "stat_date"], {"code"}, {"stat_date"}, page_size=1000, scales=PLEDGE_SCALES, dedupe_keys=["code", "stat_date"], date_filter=False,
     ),
     "manager": _spec(
         "equity_events", "stk_managers", TUSHARE_MANAGER_FIELD_MAP, MANAGER_COLUMNS, "per_year",
@@ -362,7 +365,7 @@ TABLE_SPECS: dict[str, dict] = {
         "equity_events", "stk_rewards", TUSHARE_MANAGER_REWARD_FIELD_MAP, MANAGER_REWARD_COLUMNS, "per_stock",
         EVENTS / "manager_reward", PQ / "equity_events" / "manager_reward",
         ["code", "report_period", "name"], {"code", "name", "title"}, {"announce_date", "report_period"},
-        page_size=2000, scales=MANAGER_REWARD_SCALES, dedupe_keys=["code", "report_period", "name", "title"],
+        page_size=2000, scales=MANAGER_REWARD_SCALES, dedupe_keys=["code", "report_period", "name", "title"], date_filter=False,
     ),
     # ------------------------------------------------------------------ funds
     "fund_basic": _spec(

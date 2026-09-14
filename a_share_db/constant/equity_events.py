@@ -60,7 +60,7 @@ TUSHARE_PLEDGE_FIELD_MAP = {
 PLEDGE_COLUMNS = list(TUSHARE_PLEDGE_FIELD_MAP.values()) + ["update_time"]
 PLEDGE_SCALES = {"unrest_pledge": 10000, "rest_pledge": 10000, "total_share": 10000}
 
-# Managers (stk_managers) and manager compensation (stk_rewards, reward 万元 -> 元).
+# Managers (stk_managers) and manager compensation (stk_rewards, reward in 元).
 TUSHARE_MANAGER_FIELD_MAP = {
     "ts_code": "code",
     "ann_date": "announce_date",
@@ -87,4 +87,5 @@ TUSHARE_MANAGER_REWARD_FIELD_MAP = {
     "hold_vol": "holding_shares",
 }
 MANAGER_REWARD_COLUMNS = list(TUSHARE_MANAGER_REWARD_FIELD_MAP.values()) + ["update_time"]
-MANAGER_REWARD_SCALES = {"reward": 10000}
+# The provider already reports reward in 元, so no unit conversion applies.
+MANAGER_REWARD_SCALES = {}

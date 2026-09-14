@@ -218,16 +218,20 @@ def run_registered_table(
     if layout == "per_stock":
         def fetch_fn(pro, ts_code, stock, stock_start, stock_end):
             params = {spec["key_param"]: ts_code}
-            if stock_start or stock_end:
+            if spec["date_filter"] and (stock_start or stock_end):
                 params[spec["range_params"][0]] = stock_start
                 params[spec["range_params"][1]] = stock_end
             return _fetch_pages(pro, spec, request_interval, **params)
 
+        stock_control = dict(control)
+        if update and not has_trade_date:
+            # No date cursor to extend from: refresh these small per-stock tables in full.
+            stock_control["resume"] = False
         return run_per_stock_etl(
             job_name, token, fetch_fn, lambda raw, stock: convert_spec_frame(spec, raw),
             output_root=spec["csv"], start_date=start_date, end_date=end_date,
             incremental=update and has_trade_date, columns=spec["columns"],
-            clip_start_to_list_date=bool(start_date), **(stock_kwargs or {}), **control,
+            clip_start_to_list_date=bool(start_date), **(stock_kwargs or {}), **stock_control,
         )
 
     if layout == "per_date":
@@ -280,7 +284,7 @@ def run_registered_table(
         def fetch_fn(pro, key, incremental_start=None):
             params = {spec["key_param"]: _key_request_value(spec, key)}
             key_start = incremental_start or start_date
-            if key_start or end_date:
+            if spec["date_filter"] and (key_start or end_date):
                 params[spec["range_params"][0]] = key_start
                 params[spec["range_params"][1]] = end_date
             raw = _fetch_pages(pro, spec, request_interval, **params)
